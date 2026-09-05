@@ -1,9 +1,10 @@
 import { BloodGroup, BloodComponent, RequestUrgency } from '../types';
-import { DonorProfile, IDonorProfileDocument } from '../models';
+import { DonorProfile, IDonorProfileDocument, EmergencyRequest, Notification } from '../models';
 import {
   getCompatibleDonorBloodGroups,
   isExactMatch,
   isUniversalDonor,
+  isBloodCompatible,
 } from '../config/bloodCompatibility';
 import { calculateDistanceKm, formatDistance, estimateTransitTimeMinutes } from '../utils/geo';
 import { isDbConnected } from '../config/database';
@@ -260,3 +261,75 @@ export async function findPotentialMatches(
   // 2. Score and rank potential matches
   return rankPotentialMatches(activeDonors, options);
 }
+
+/**
+ * Scans the database and cleans up any existing invalid acceptances or notifications
+ * where an incompatible donor accepted an emergency request.
+ */
+export async function sanitizeIncompatibleMatches(): Promise<{
+  invalidMatchesReverted: number;
+  invalidNotificationsRemoved: number;
+}> {
+  if (!isDbConnected()) return { invalidMatchesReverted: 0, invalidNotificationsRemoved: 0 };
+
+  let invalidMatchesReverted = 0;
+  let invalidNotificationsRemoved = 0;
+
+  // 1. Clean up invalid potential matches in EmergencyRequests
+  const requests = await EmergencyRequest.find({
+    'potentialMatches.status': 'ACCEPTED',
+  });
+
+  for (const req of requests) {
+    let modified = false;
+    for (const match of req.potentialMatches) {
+      if (match.status === 'ACCEPTED') {
+        const donor = await DonorProfile.findById(match.donorId);
+        if (donor && !isBloodCompatible(donor.bloodGroup, req.bloodGroup, req.bloodComponent)) {
+          console.log(
+            `[Sanitize] Reverting invalid match: Donor ${donor.bloodGroup} for Request ${req.bloodGroup} (${req._id})`
+          );
+          match.status = 'DECLINED';
+          invalidMatchesReverted++;
+          modified = true;
+        }
+      }
+    }
+
+    if (modified) {
+      // Recalculate request status: if active units not satisfied, revert to ACTIVE
+      const validAccepted = req.potentialMatches.filter((m) => m.status === 'ACCEPTED').length;
+      if (req.status === 'MATCHED' && validAccepted < req.unitsRequired) {
+        req.status = 'ACTIVE';
+      }
+      await req.save();
+    }
+  }
+
+  // 2. Clean up invalid DONOR_ACCEPTED notifications
+  const acceptedNotifications = await Notification.find({ type: 'DONOR_ACCEPTED' });
+  for (const notif of acceptedNotifications) {
+    if (notif.data && notif.data.requestId && notif.data.donorId) {
+      const [req, donor] = await Promise.all([
+        EmergencyRequest.findById(notif.data.requestId),
+        DonorProfile.findById(notif.data.donorId),
+      ]);
+      if (req && donor && !isBloodCompatible(donor.bloodGroup, req.bloodGroup, req.bloodComponent)) {
+        console.log(
+          `[Sanitize] Removing invalid notification ${notif._id} (Donor ${donor.bloodGroup} -> Request ${req.bloodGroup})`
+        );
+        await Notification.findByIdAndDelete(notif._id);
+        invalidNotificationsRemoved++;
+      }
+    }
+  }
+
+  if (invalidMatchesReverted > 0 || invalidNotificationsRemoved > 0) {
+    console.log(
+      `[Sanitize] Completed: ${invalidMatchesReverted} invalid matches reverted, ${invalidNotificationsRemoved} invalid notifications removed.`
+    );
+  }
+
+  return { invalidMatchesReverted, invalidNotificationsRemoved };
+}
+

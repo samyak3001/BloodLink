@@ -27,7 +27,7 @@ import {
   Notification,
   AuditLog,
 } from '../models';
-import { hashPassword } from '../utils/password';
+import { hashPassword, comparePassword } from '../utils/password';
 import { connectDB, disconnectDB } from '../config/database';
 
 dotenv.config({ path: path.join(__dirname, '../../.env') });
@@ -594,9 +594,181 @@ export async function seedDatabase(): Promise<{
   return summary;
 }
 
+/**
+ * Idempotently ensures that all development demo accounts (and corresponding profiles)
+ * exist in the database with their correct roles and hashed passwords.
+ *
+ * This function NEVER drops collections or deletes existing records.
+ * It is safe to run on server startup during development.
+ */
+export async function ensureDemoUsers(): Promise<void> {
+  validateSeedEnvironment();
+
+  const defaultPasswordHash = await hashPassword('Password123!');
+
+  // 1. Ensure Administrators
+  const admins = [
+    DEMO_CREDENTIALS.admin,
+    DEMO_CREDENTIALS.adminAlt,
+  ];
+
+  for (const a of admins) {
+    const existing = await User.findOne({ email: a.email.toLowerCase() });
+    if (!existing) {
+      await User.create({
+        name: a.name,
+        email: a.email.toLowerCase(),
+        passwordHash: defaultPasswordHash,
+        role: 'ADMIN',
+        phone: a.phone,
+        isVerified: true,
+        status: 'ACTIVE',
+      });
+      console.log(`[Demo Seed] Created Admin account: ${a.email}`);
+    } else {
+      const match = await comparePassword('Password123!', existing.passwordHash);
+      if (!match || existing.status !== 'ACTIVE' || existing.role !== 'ADMIN' || !existing.isVerified) {
+        existing.passwordHash = defaultPasswordHash;
+        existing.status = 'ACTIVE';
+        existing.role = 'ADMIN';
+        existing.isVerified = true;
+        await existing.save();
+        console.log(`[Demo Seed] Updated Admin account credentials: ${a.email}`);
+      }
+    }
+  }
+
+  // 2. Ensure Hospitals & Profiles
+  const hospitals = [
+    DEMO_CREDENTIALS.hospitalMetro,
+    DEMO_CREDENTIALS.hospitalCityCare,
+    DEMO_CREDENTIALS.hospitalPending,
+  ];
+
+  for (const h of hospitals) {
+    let user = await User.findOne({ email: h.email.toLowerCase() });
+    if (!user) {
+      user = await User.create({
+        name: h.name,
+        email: h.email.toLowerCase(),
+        passwordHash: defaultPasswordHash,
+        role: 'HOSPITAL',
+        phone: h.phone,
+        isVerified: h.isVerifiedByAdmin,
+        status: 'ACTIVE',
+      });
+      console.log(`[Demo Seed] Created Hospital account: ${h.email}`);
+    } else {
+      const match = await comparePassword('Password123!', user.passwordHash);
+      if (!match || user.status !== 'ACTIVE' || user.role !== 'HOSPITAL' || user.isVerified !== h.isVerifiedByAdmin) {
+        user.passwordHash = defaultPasswordHash;
+        user.status = 'ACTIVE';
+        user.role = 'HOSPITAL';
+        user.isVerified = h.isVerifiedByAdmin;
+        await user.save();
+        console.log(`[Demo Seed] Updated Hospital account credentials: ${h.email}`);
+      }
+    }
+
+    // Ensure HospitalProfile exists
+    const existingProfile = await HospitalProfile.findOne({ userId: user._id });
+    if (!existingProfile) {
+      await HospitalProfile.create({
+        userId: user._id,
+        hospitalName: h.hospitalName,
+        licenseNumber: h.licenseNumber,
+        emergencyHelpline: h.emergencyHelpline,
+        isVerifiedByAdmin: h.isVerifiedByAdmin,
+        location: {
+          type: 'Point',
+          coordinates: h.coordinates,
+        },
+        address: h.address,
+      });
+      console.log(`[Demo Seed] Created Hospital profile for: ${h.email}`);
+    } else if (existingProfile.isVerifiedByAdmin !== h.isVerifiedByAdmin) {
+      existingProfile.isVerifiedByAdmin = h.isVerifiedByAdmin;
+      await existingProfile.save();
+    }
+  }
+
+  // 3. Ensure Donors & Profiles
+  const donors = [
+    DEMO_CREDENTIALS.donorAlex,
+    DEMO_CREDENTIALS.donorTest,
+    DEMO_CREDENTIALS.donorSarah,
+    DEMO_CREDENTIALS.donorMichael,
+    DEMO_CREDENTIALS.donorPriya,
+  ];
+
+  for (const d of donors) {
+    let user = await User.findOne({ email: d.email.toLowerCase() });
+    if (!user) {
+      user = await User.create({
+        name: d.name,
+        email: d.email.toLowerCase(),
+        passwordHash: defaultPasswordHash,
+        role: 'DONOR',
+        phone: d.phone,
+        isVerified: true,
+        status: 'ACTIVE',
+      });
+      console.log(`[Demo Seed] Created Donor account: ${d.email}`);
+    } else {
+      const match = await comparePassword('Password123!', user.passwordHash);
+      if (!match || user.status !== 'ACTIVE' || user.role !== 'DONOR' || !user.isVerified) {
+        user.passwordHash = defaultPasswordHash;
+        user.status = 'ACTIVE';
+        user.role = 'DONOR';
+        user.isVerified = true;
+        await user.save();
+        console.log(`[Demo Seed] Updated Donor account credentials: ${d.email}`);
+      }
+    }
+
+    // Ensure DonorProfile exists
+    const existingProfile = await DonorProfile.findOne({ userId: user._id });
+    if (!existingProfile) {
+      await DonorProfile.create({
+        userId: user._id,
+        bloodGroup: d.bloodGroup,
+        supportedComponents: [...d.supportedComponents],
+        isAvailable: d.isAvailable,
+        location: {
+          type: 'Point',
+          coordinates: d.coordinates,
+        },
+        address: {
+          city: d.city,
+          district: d.district,
+          postalCode: d.postalCode,
+        },
+        selfReportedScreening: {
+          isAgeEligible: true,
+          isWeightEligible: true,
+          hasNoRecentIllness: true,
+          hasValidInterval: true,
+          screeningDisclaimerAcknowledged: true,
+          lastScreeningDate: new Date(),
+        },
+      });
+      console.log(`[Demo Seed] Created Donor profile for: ${d.email}`);
+    }
+  }
+
+  console.log('[Demo Seed] All demo accounts verified and ready in database.');
+}
+
 // Execute standalone if called directly
 if (require.main === module) {
-  seedDatabase()
+  const runner = process.argv.includes('--demo-only')
+    ? (async () => {
+        await connectDB();
+        await ensureDemoUsers();
+      })()
+    : seedDatabase();
+
+  runner
     .then(async () => {
       await disconnectDB();
       process.exit(0);

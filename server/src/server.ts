@@ -14,6 +14,8 @@ import notificationRoutes from './routes/notificationRoutes';
 import userRoutes from './routes/userRoutes';
 import { connectDB } from './config/database';
 import { initSocketIO } from './services/socketService';
+import { ensureDemoUsers } from './scripts/seed';
+import { sanitizeIncompatibleMatches } from './services/matchingService';
 
 // Ensure .env is loaded from either server directory or workspace root
 dotenv.config();
@@ -149,6 +151,10 @@ if (process.env.NODE_ENV !== 'test') {
     console.log(`[BloodLink Server] Health check available at http://localhost:${PORT}/api/health`);
     try {
       await connectDB();
+      if (process.env.NODE_ENV !== 'production') {
+        await ensureDemoUsers();
+        await sanitizeIncompatibleMatches();
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn('-----------------------------------------------------------');

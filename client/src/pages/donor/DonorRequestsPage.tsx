@@ -1,8 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { Search, RefreshCw } from 'lucide-react';
 import { useToast } from '../../components/feedback';
+import { useAuth } from '../../context/AuthContext';
 import { getEmergencyRequestsApi } from '../../api/requestsApi';
-import { respondToRequestApi } from '../../api/donorsApi';
+import { respondToRequestApi, getDonorDashboardApi } from '../../api/donorsApi';
+import { isBloodCompatible } from '../../utils/bloodCompatibility';
+import { BloodGroup } from '../../types';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Select } from '../../components/ui/Select';
@@ -12,7 +15,12 @@ import { EmergencyRequestCard } from '../../components/domain/EmergencyRequestCa
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 
 export const DonorRequestsPage: React.FC = () => {
+  const { user, profile } = useAuth();
   const { toast } = useToast();
+
+  const [donorBloodGroup, setDonorBloodGroup] = useState<BloodGroup | undefined>(
+    (profile as any)?.bloodGroup || (user as any)?.bloodGroup
+  );
 
   const [requests, setRequests] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -88,16 +96,54 @@ export const DonorRequestsPage: React.FC = () => {
   };
 
   useEffect(() => {
+    const bg = (profile as any)?.bloodGroup || (user as any)?.bloodGroup;
+    if (bg) {
+      setDonorBloodGroup(bg);
+    } else {
+      getDonorDashboardApi()
+        .then((data) => {
+          const fetchedBg = data?.donor?.bloodGroup || data?.bloodGroup || data?.profile?.bloodGroup;
+          if (fetchedBg) setDonorBloodGroup(fetchedBg);
+        })
+        .catch(() => {});
+    }
+  }, [user, profile]);
+
+  useEffect(() => {
     fetchRequests();
   }, [selectedBloodGroup, selectedUrgency]);
 
   const handlePromptAction = (id: string, action: 'ACCEPTED' | 'DECLINED') => {
+    const targetReq = requests.find((r) => (r.id || r._id) === id);
+    if (action === 'ACCEPTED' && targetReq && donorBloodGroup) {
+      if (!isBloodCompatible(donorBloodGroup, targetReq.bloodGroup, targetReq.bloodComponent)) {
+        toast.error(
+          `Incompatible blood groups: Donor (${donorBloodGroup}) cannot donate to recipient with blood group (${targetReq.bloodGroup}).`,
+          'Blood Incompatible'
+        );
+        return;
+      }
+    }
     setPendingAction({ id, action });
     setConfirmModalOpen(true);
   };
 
   const executeAction = async () => {
     if (!pendingAction) return;
+
+    if (pendingAction.action === 'ACCEPTED' && donorBloodGroup) {
+      const targetReq = requests.find((r) => (r.id || r._id) === pendingAction.id);
+      if (targetReq && !isBloodCompatible(donorBloodGroup, targetReq.bloodGroup, targetReq.bloodComponent)) {
+        toast.error(
+          `Incompatible blood groups: Donor (${donorBloodGroup}) cannot donate to recipient with blood group (${targetReq.bloodGroup}).`,
+          'Blood Incompatible'
+        );
+        setConfirmModalOpen(false);
+        setPendingAction(null);
+        return;
+      }
+    }
+
     try {
       await respondToRequestApi(pendingAction.id, pendingAction.action);
       toast.success(
@@ -106,12 +152,9 @@ export const DonorRequestsPage: React.FC = () => {
       );
       // Remove responded request from active view
       setRequests((prev) => prev.filter((r) => r.id !== pendingAction.id && r._id !== pendingAction.id));
-    } catch (err) {
-      toast.info(
-        `Dispatched response: ${pendingAction.action} (simulated update).`,
-        'Response Recorded'
-      );
-      setRequests((prev) => prev.filter((r) => r.id !== pendingAction.id && r._id !== pendingAction.id));
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || err?.message || `Failed to ${pendingAction.action.toLowerCase()} request.`;
+      toast.error(msg, 'Response Error');
     } finally {
       setConfirmModalOpen(false);
       setPendingAction(null);
@@ -119,10 +162,17 @@ export const DonorRequestsPage: React.FC = () => {
   };
 
   const filteredRequests = requests.filter((r) => {
+    // Phase 3: Only show requests that the donor is actually eligible/compatible for
+    if (donorBloodGroup && !isBloodCompatible(donorBloodGroup, r.bloodGroup, r.bloodComponent || 'WHOLE_BLOOD')) {
+      return false;
+    }
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
+    const hospName = r.hospitalName || r.hospitalId?.hospitalName || r.hospital?.hospitalName || '';
+    const hospCity = r.city || r.hospitalAddress?.city || r.hospitalId?.address?.city || '';
     return (
-      r.hospitalName?.toLowerCase().includes(q) ||
+      hospName.toLowerCase().includes(q) ||
+      hospCity.toLowerCase().includes(q) ||
       r.patientIdentifier?.toLowerCase().includes(q) ||
       r.bloodGroup?.toLowerCase().includes(q) ||
       r.notes?.toLowerCase().includes(q)
@@ -202,29 +252,49 @@ export const DonorRequestsPage: React.FC = () => {
         </div>
       ) : filteredRequests.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {filteredRequests.map((req: any) => (
-            <EmergencyRequestCard
-              key={req.id || req._id}
-              id={req.id || req._id}
-              patientIdentifier={req.patientIdentifier}
-              bloodGroup={req.bloodGroup}
-              bloodComponent={req.bloodComponent || 'WHOLE_BLOOD'}
-              unitsRequired={req.unitsRequired}
-              urgency={req.urgency}
-              status={req.status || 'ACTIVE'}
-              hospitalName={req.hospitalName}
-              city={req.city}
-              distanceFormatted={req.distanceFormatted || 'Local Hospital'}
-              estimatedTransitTimeMinutes={req.estimatedTransitTimeMinutes}
-              requiredWithinHours={req.requiredWithinHours}
-              notes={req.notes}
-              onAccept={() => handlePromptAction(req.id || req._id, 'ACCEPTED')}
-              onDecline={() => handlePromptAction(req.id || req._id, 'DECLINED')}
-              onViewDetails={() => {
-                toast.info(`Hospital: ${req.hospitalName} | Transit: ~${req.estimatedTransitTimeMinutes || 15} mins`, 'Request Info');
-              }}
-            />
-          ))}
+          {filteredRequests.map((req: any) => {
+            const hospName =
+              req.hospitalName ||
+              req.hospitalId?.hospitalName ||
+              req.hospital?.hospitalName ||
+              'Hospital information unavailable';
+
+            const hospAddress = req.hospitalAddress || req.hospitalId?.address || req.hospital?.address;
+            const hospCity =
+              req.city ||
+              (hospAddress
+                ? [hospAddress.city, hospAddress.district || hospAddress.state].filter(Boolean).join(', ')
+                : undefined) ||
+              'Location unavailable';
+
+            return (
+              <EmergencyRequestCard
+                key={req.id || req._id}
+                id={req.id || req._id}
+                patientIdentifier={req.patientIdentifier}
+                bloodGroup={req.bloodGroup}
+                donorBloodGroup={donorBloodGroup}
+                bloodComponent={req.bloodComponent || 'WHOLE_BLOOD'}
+                unitsRequired={req.unitsRequired}
+                urgency={req.urgency}
+                status={req.status || 'ACTIVE'}
+                hospitalName={hospName}
+                city={hospCity}
+                distanceFormatted={req.distanceFormatted}
+                estimatedTransitTimeMinutes={req.estimatedTransitTimeMinutes}
+                requiredWithinHours={req.requiredWithinHours}
+                notes={req.notes}
+                onAccept={() => handlePromptAction(req.id || req._id, 'ACCEPTED')}
+                onDecline={() => handlePromptAction(req.id || req._id, 'DECLINED')}
+                onViewDetails={() => {
+                  toast.info(
+                    `Hospital: ${hospName} | Location: ${hospCity} | Urgency: ${req.urgency} | Timeframe: < ${req.requiredWithinHours || 3} Hours`,
+                    'Request Details'
+                  );
+                }}
+              />
+            );
+          })}
         </div>
       ) : (
         <EmptyState

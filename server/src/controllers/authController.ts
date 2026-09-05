@@ -255,10 +255,12 @@ export async function forgotPassword(
 ): Promise<void> {
   try {
     const { email }: ForgotPasswordInput = req.body;
+    const normalizedEmail = email.trim().toLowerCase();
 
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email: normalizedEmail });
 
     let devResetToken: string | undefined;
+    const isDev = process.env.NODE_ENV !== 'production';
 
     if (user && user.status !== 'SUSPENDED') {
       // Generate secure 32-byte random token
@@ -279,9 +281,14 @@ export async function forgotPassword(
         ipAddress: req.ip,
       });
 
-      // For local testing in development only
-      if (process.env.NODE_ENV === 'development') {
+      // For local testing in development only (never exposed in production)
+      if (isDev) {
         devResetToken = rawToken;
+        console.log('\n===========================================================');
+        console.log(`[Dev Password Recovery] Target Account: ${user.email}`);
+        console.log(`[Dev Password Recovery] Generated Token: ${rawToken}`);
+        console.log(`[Dev Password Recovery] Direct Reset URL: http://localhost:5173/reset-password?token=${rawToken}`);
+        console.log('===========================================================\n');
       }
     }
 
@@ -289,7 +296,7 @@ export async function forgotPassword(
     res.status(200).json({
       status: 'success',
       message: 'If an account with that email exists, password reset instructions have been generated.',
-      ...(process.env.NODE_ENV === 'development' && devResetToken ? { devResetToken } : {}),
+      ...(isDev && devResetToken ? { devResetToken } : {}),
     });
   } catch (error) {
     next(error);

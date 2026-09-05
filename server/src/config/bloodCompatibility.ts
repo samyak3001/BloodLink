@@ -56,12 +56,13 @@ export function getCompatibleDonorBloodGroups(
  * Check if a donor blood group is compatible with a recipient blood group
  */
 export function isBloodCompatible(
-  donorGroup: BloodGroup,
-  recipientGroup: BloodGroup,
+  donorGroup?: string | null,
+  recipientGroup?: string | null,
   component: BloodComponent = 'WHOLE_BLOOD'
 ): boolean {
-  const compatibleDonors = getCompatibleDonorBloodGroups(recipientGroup, component);
-  return compatibleDonors.includes(donorGroup);
+  if (!donorGroup || !recipientGroup) return false;
+  const compatibleDonors = getCompatibleDonorBloodGroups(recipientGroup as BloodGroup, component);
+  return compatibleDonors.includes(donorGroup as BloodGroup);
 }
 
 /**

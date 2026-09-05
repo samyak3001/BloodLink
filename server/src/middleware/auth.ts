@@ -128,3 +128,46 @@ export function authorize(...allowedRoles: UserRole[]) {
     next();
   };
 }
+
+/**
+ * Optional authentication middleware:
+ * Populates req.user if valid Bearer token provided, but allows unauthenticated visitors to proceed.
+ */
+export async function optionalAuthenticate(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return next();
+    }
+
+    const token = authHeader.split(' ')[1];
+    if (!token) return next();
+
+    const decoded = verifyToken(token);
+    if (!decoded) return next();
+
+    if (mongoose.connection.readyState === 1) {
+      const userDoc = await User.findById(decoded.userId);
+      if (userDoc && userDoc.status !== 'SUSPENDED') {
+        req.user = {
+          id: userDoc._id.toString(),
+          name: userDoc.name,
+          email: userDoc.email,
+          role: userDoc.role,
+          phone: userDoc.phone,
+          isVerified: userDoc.isVerified,
+          status: userDoc.status,
+          createdAt: userDoc.createdAt,
+          updatedAt: userDoc.updatedAt,
+        };
+      }
+    }
+  } catch {
+    // Non-fatal: proceed as unauthenticated guest
+  }
+  next();
+}

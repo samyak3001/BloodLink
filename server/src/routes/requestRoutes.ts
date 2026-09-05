@@ -5,8 +5,9 @@ import {
   getEmergencyRequestById,
   updateEmergencyRequestStatus,
   getPotentialMatchesForRequest,
+  contactAcceptedDonor,
 } from '../controllers/emergencyRequestController';
-import { authenticate, authorize } from '../middleware/auth';
+import { authenticate, authorize, optionalAuthenticate } from '../middleware/auth';
 import { validateBody } from '../middleware/validate';
 import {
   createEmergencyRequestSchema,
@@ -15,8 +16,8 @@ import {
 
 const router = Router();
 
-// Public / Filtered Emergency Request Listing
-router.get('/', getEmergencyRequests);
+// Public / Filtered Emergency Request Listing (compatible filtering if donor)
+router.get('/', optionalAuthenticate, getEmergencyRequests);
 
 // Create Emergency Request (Hospitals Only)
 router.post(
@@ -27,8 +28,8 @@ router.post(
   createEmergencyRequest
 );
 
-// Get Request by ID (Includes caller-specific response status if donor)
-router.get('/:id', getEmergencyRequestById);
+// Get Request by ID (Includes caller-specific response status and authorized accepted donors)
+router.get('/:id', optionalAuthenticate, getEmergencyRequestById);
 
 // Update Request Status (Hospital Owner or Admin)
 router.patch(
@@ -44,6 +45,14 @@ router.get(
   authenticate,
   authorize('HOSPITAL', 'ADMIN'),
   getPotentialMatchesForRequest
+);
+
+// Contact Accepted Donor (Hospital Owner or Admin Only)
+router.post(
+  '/:id/contact-donor',
+  authenticate,
+  authorize('HOSPITAL', 'ADMIN'),
+  contactAcceptedDonor
 );
 
 export default router;

@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { DonorProfile, EmergencyRequest, DonationHistory, Notification, AuditLog, HospitalProfile } from '../models';
+import { DonorProfile, EmergencyRequest, DonationHistory, Notification, AuditLog, HospitalProfile, User } from '../models';
 import { isBloodCompatible } from '../config/bloodCompatibility';
 import { calculateDistanceKm } from '../utils/geo';
 import { BloodGroup, BloodComponent } from '../types';
@@ -7,6 +7,7 @@ import {
   emitDonorResponse,
   emitRequestUpdated,
   pushUnreadCount,
+  getIO,
 } from '../services/socketService';
 
 /**
@@ -32,7 +33,7 @@ export async function getDonorDashboard(
     // 1. Find active nearby emergency requests compatible with this donor
     const activeRequests = await EmergencyRequest.find({
       status: { $in: ['ACTIVE', 'MATCHED'] },
-    }).populate('hospitalId', 'hospitalName emergencyHelpline address');
+    }).populate('hospitalId', 'hospitalName emergencyHelpline address location');
 
     // Filter compatible requests
     const compatibleRequests = activeRequests
@@ -54,15 +55,36 @@ export async function getDonorDashboard(
           (m) => m.donorId.toString() === donor._id.toString()
         );
 
+        const hosp = request.hospitalId as unknown as {
+          _id?: unknown;
+          hospitalName?: string;
+          emergencyHelpline?: string;
+          address?: { street?: string; city?: string; district?: string; state?: string; postalCode?: string };
+        } | null;
+
+        const hospAddress = hosp?.address;
+        const cityFormatted = hospAddress
+          ? [hospAddress.city, hospAddress.district || hospAddress.state].filter(Boolean).join(', ')
+          : undefined;
+
         return {
-          id: request._id,
-          hospitalName: (request.hospitalId as unknown as { hospitalName?: string })?.hospitalName || 'Hospital',
+          id: request._id.toString(),
+          patientIdentifier: request.patientIdentifier,
+          hospitalName: hosp?.hospitalName || 'Hospital information unavailable',
+          hospitalAddress: hospAddress,
+          city: cityFormatted || 'Location unavailable',
+          district: hospAddress?.district,
+          state: hospAddress?.state,
           bloodGroup: request.bloodGroup,
           bloodComponent: request.bloodComponent,
           unitsRequired: request.unitsRequired,
           urgency: request.urgency,
           status: request.status,
+          requiredWithinHours: request.requiredWithinHours,
+          notes: request.notes,
           distanceKm,
+          distanceFormatted: `${(Math.round(distanceKm * 10) / 10).toFixed(1)} km away`,
+          estimatedTransitTimeMinutes: Math.max(5, Math.round(distanceKm * 3)),
           myResponseStatus: matchEntry ? matchEntry.status : 'NOTIFIED',
           createdAt: request.createdAt,
         };
@@ -81,6 +103,8 @@ export async function getDonorDashboard(
       isRead: false,
     });
 
+    const nearbyList = compatibleRequests.slice(0, 10);
+
     res.status(200).json({
       status: 'success',
       dashboard: {
@@ -94,7 +118,8 @@ export async function getDonorDashboard(
           totalCompletedDonations: donationCount,
           unreadNotificationsCount: unreadNotifications,
         },
-        nearbyCompatibleRequests: compatibleRequests.slice(0, 10),
+        nearbyCompatibleRequests: nearbyList,
+        nearbyRequests: nearbyList,
       },
     });
   } catch (error) {
@@ -207,6 +232,23 @@ export async function respondToEmergencyRequest(
       return;
     }
 
+    // Strict biological blood compatibility validation
+    if (action === 'ACCEPTED') {
+      const isCompatible = isBloodCompatible(
+        donor.bloodGroup,
+        request.bloodGroup,
+        request.bloodComponent
+      );
+      if (!isCompatible) {
+        res.status(400).json({
+          status: 'fail',
+          code: 'BLOOD_INCOMPATIBLE',
+          message: `Incompatible blood groups: Donor with blood group ${donor.bloodGroup} cannot donate to recipient with blood group ${request.bloodGroup}.`,
+        });
+        return;
+      }
+    }
+
     // Locate existing match entry or create if self-discovered
     let matchEntry = request.potentialMatches.find(
       (m) => m.donorId.toString() === donor._id.toString()
@@ -247,20 +289,47 @@ export async function respondToEmergencyRequest(
 
     await request.save();
 
+    // Find donor user for name and notification
+    const donorUser = await User.findById(donor.userId);
+    const donorName = donorUser?.name || 'Anonymous Donor';
+    const donorLocation = [donor.address?.city, donor.address?.district].filter(Boolean).join(', ') || 'Location unavailable';
+
     // Notify the hospital (persistent notification)
     const hospital = await HospitalProfile.findById(request.hospitalId);
     if (hospital && action === 'ACCEPTED') {
       await Notification.create({
         recipientId: hospital.userId,
         type: 'DONOR_ACCEPTED',
-        title: `Donor Accepted: ${request.bloodGroup} Request`,
-        message: `A potential donor with compatible blood group (${donor.bloodGroup}) has accepted your emergency request for ${request.unitsRequired} unit(s).`,
+        title: 'Donor accepted your emergency blood request.',
+        message: `${donorName} with compatible blood group (${donor.bloodGroup}) has accepted your emergency request (${request.patientIdentifier || request._id}) for ${request.unitsRequired} unit(s).`,
         data: {
           requestId: request._id.toString(),
+          patientIdentifier: request.patientIdentifier,
           donorId: donor._id.toString(),
+          donorName,
+          bloodGroup: donor.bloodGroup,
+          location: donorLocation,
           action,
         },
       });
+    }
+
+    // Confirmation notification for the donor
+    if (action === 'ACCEPTED') {
+      await Notification.create({
+        recipientId: donor.userId,
+        type: 'DONATION_MATCH',
+        title: `Acceptance Confirmed: ${request.bloodGroup} Emergency Request`,
+        message: `Your acceptance to donate for ${hospital?.hospitalName || 'the medical facility'} has been recorded. Thank you for your lifesaving support!`,
+        data: {
+          requestId: request._id.toString(),
+          patientIdentifier: request.patientIdentifier,
+          hospitalName: hospital?.hospitalName,
+          bloodGroup: request.bloodGroup,
+          action,
+        },
+      });
+      void pushUnreadCount(donor.userId.toString());
     }
 
     const totalAcceptedCount = request.potentialMatches.filter((m) => m.status === 'ACCEPTED').length;
@@ -271,16 +340,27 @@ export async function respondToEmergencyRequest(
       if (hospital) {
         const hospitalUserId = hospital.userId?.toString();
         if (hospitalUserId) {
-          emitDonorResponse(hospitalUserId, {
+          const donorPayload = {
             requestId: request._id.toString(),
             donorId: donor._id.toString(),
+            donorName,
             donorBloodGroup: donor.bloodGroup,
             action,
             requestStatus: request.status,
             totalAccepted: totalAcceptedCount,
             unitsRequired: request.unitsRequired,
+            location: donorLocation,
+            city: donor.address?.city,
+            district: donor.address?.district,
             timestamp: new Date().toISOString(),
-          });
+          };
+          emitDonorResponse(hospitalUserId, donorPayload);
+          try {
+            const io = getIO();
+            io.to(`request:${request._id.toString()}`).emit('donor:response', donorPayload);
+          } catch {
+            // Room broadcast is non-fatal
+          }
           // Refresh unread count for hospital
           void pushUnreadCount(hospitalUserId);
         }

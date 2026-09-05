@@ -1,6 +1,7 @@
 import React from 'react';
 import { Building2, Clock, MapPin, Activity, ArrowRight, Check, X } from 'lucide-react';
 import { BloodGroup, BloodComponent, RequestUrgency, RequestStatus } from '../../types';
+import { isBloodCompatible } from '../../utils/bloodCompatibility';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { Card, CardContent } from '../ui/Card';
@@ -14,13 +15,14 @@ export interface EmergencyRequestCardProps {
   unitsRequired: number;
   urgency: RequestUrgency;
   status: RequestStatus;
-  hospitalName: string;
+  hospitalName?: string;
   city?: string;
   distanceFormatted?: string;
   estimatedTransitTimeMinutes?: number;
   requiredWithinHours?: number;
   createdAt?: string;
   notes?: string;
+  donorBloodGroup?: BloodGroup;
   onAccept?: (id: string) => void;
   onDecline?: (id: string) => void;
   onViewDetails?: (id: string) => void;
@@ -36,17 +38,25 @@ export const EmergencyRequestCard: React.FC<EmergencyRequestCardProps> = ({
   urgency,
   status,
   hospitalName,
-  city = 'Local Medical Center',
+  city,
   distanceFormatted,
   estimatedTransitTimeMinutes,
   requiredWithinHours,
   createdAt,
   notes,
+  donorBloodGroup,
   onAccept,
   onDecline,
   onViewDetails,
   className,
 }) => {
+  const isCompatible = donorBloodGroup
+    ? isBloodCompatible(donorBloodGroup, bloodGroup, bloodComponent)
+    : true;
+
+  const displayHospitalName = hospitalName?.trim() || 'Hospital information unavailable';
+  const displayLocation = city?.trim() || 'Location unavailable';
+
   return (
     <Card
       hoverable
@@ -68,6 +78,11 @@ export const EmergencyRequestCard: React.FC<EmergencyRequestCardProps> = ({
             <span className="text-[11px] font-mono text-slate-400">
               Ref: {patientIdentifier}
             </span>
+            {donorBloodGroup && !isCompatible && (
+              <span className="text-[10px] font-bold text-emergency-700 bg-emergency-50 px-2 py-0.5 rounded-full border border-emergency-200">
+                Incompatible with {donorBloodGroup}
+              </span>
+            )}
           </div>
 
           <Badge status={status} />
@@ -90,15 +105,17 @@ export const EmergencyRequestCard: React.FC<EmergencyRequestCardProps> = ({
                 {unitsRequired} Unit{unitsRequired > 1 ? 's' : ''} Needed Urgently
               </h4>
 
-              <div className="flex items-center gap-1 text-xs text-slate-600">
+              <div className="flex items-center gap-1.5 text-xs text-slate-600">
                 <Building2 className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-                <span className="font-medium text-slate-800 truncate">{hospitalName}</span>
+                <span className="text-slate-400 font-medium">Requested by:</span>
+                <span className="font-bold text-slate-800 truncate">{displayHospitalName}</span>
               </div>
 
               <div className="flex items-center gap-1.5 text-xs text-slate-500">
                 <MapPin className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-                <span>{city}</span>
-                {distanceFormatted && (
+                <span className="text-slate-400 font-medium">Location:</span>
+                <span className="text-slate-700">{displayLocation}</span>
+                {distanceFormatted && distanceFormatted !== 'Local Hospital' && (
                   <span className="font-semibold text-slate-700">
                     • {distanceFormatted}
                   </span>
@@ -153,14 +170,26 @@ export const EmergencyRequestCard: React.FC<EmergencyRequestCardProps> = ({
             )}
 
             {onAccept && status === 'ACTIVE' && (
-              <Button
-                size="sm"
-                variant="vitality"
-                onClick={() => onAccept(id)}
-                leftIcon={<Check className="h-3.5 w-3.5" />}
-              >
-                Accept
-              </Button>
+              isCompatible ? (
+                <Button
+                  size="sm"
+                  variant="vitality"
+                  onClick={() => onAccept(id)}
+                  leftIcon={<Check className="h-3.5 w-3.5" />}
+                >
+                  Accept
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled
+                  className="opacity-50 cursor-not-allowed text-xs text-slate-400 bg-slate-50 border-slate-200"
+                  title={`Blood group incompatible: Donor (${donorBloodGroup}) cannot donate to recipient with blood group (${bloodGroup})`}
+                >
+                  Incompatible
+                </Button>
+              )
             )}
 
             {onViewDetails && (

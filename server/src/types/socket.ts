@@ -26,11 +26,15 @@ export interface EmergencyAlertPayload {
 export interface DonorResponsePayload {
   requestId: string;
   donorId: string;
+  donorName?: string;
   donorBloodGroup: string;
   action: 'ACCEPTED' | 'DECLINED';
   requestStatus: string;
   totalAccepted: number;
   unitsRequired: number;
+  location?: string;
+  city?: string;
+  district?: string;
   timestamp: string;
 }
 

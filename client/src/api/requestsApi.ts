@@ -15,7 +15,7 @@ export interface CreateRequestData {
 
 export async function getEmergencyRequestsApi(params: Record<string, string> = {}) {
   const query = new URLSearchParams(params).toString();
-  const res = await fetch(`/api/requests?${query}`);
+  const res = await authenticatedFetch(`/api/requests?${query}`);
   const json = await res.json();
   if (!res.ok) throw new Error(json.message || 'Failed to fetch emergency requests');
   return json;
@@ -52,5 +52,15 @@ export async function getPotentialMatchesApi(id: string) {
   const res = await authenticatedFetch(`/api/requests/${id}/potential-matches`);
   const json = await res.json();
   if (!res.ok) throw new Error(json.message || 'Failed to fetch potential matches');
+  return json;
+}
+
+export async function contactAcceptedDonorApi(requestId: string, donorId: string, message?: string) {
+  const res = await authenticatedFetch(`/api/requests/${requestId}/contact-donor`, {
+    method: 'POST',
+    body: JSON.stringify({ donorId, message }),
+  });
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.message || 'Failed to contact donor');
   return json;
 }

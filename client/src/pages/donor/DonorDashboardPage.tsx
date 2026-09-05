@@ -18,6 +18,7 @@ import { SkeletonCard } from '../../components/ui/Skeleton';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { MedicalDisclaimer } from '../../components/domain/MedicalDisclaimer';
 import { EmergencyRequestCard } from '../../components/domain/EmergencyRequestCard';
+import { isBloodCompatible } from '../../utils/bloodCompatibility';
 import { BloodGroup } from '../../types';
 
 export const DonorDashboardPage: React.FC = () => {
@@ -116,23 +117,37 @@ export const DonorDashboardPage: React.FC = () => {
     }
   };
 
+  const donorBloodGroup: BloodGroup =
+    dashboardData?.donor?.bloodGroup || dashboardData?.bloodGroup || dashboardData?.profile?.bloodGroup || (user as any)?.bloodGroup || 'O+';
+
   const handleRespond = async (requestId: string, action: 'ACCEPTED' | 'DECLINED') => {
+    const allRequests = [
+      ...(dashboardData?.nearbyRequests || []),
+      ...(dashboardData?.nearbyCompatibleRequests || []),
+    ];
+    const targetReq = allRequests.find((r: any) => (r.id || r._id) === requestId);
+
+    if (action === 'ACCEPTED' && targetReq && donorBloodGroup) {
+      if (!isBloodCompatible(donorBloodGroup, targetReq.bloodGroup, targetReq.bloodComponent)) {
+        toast.error(
+          `Incompatible blood groups: Donor (${donorBloodGroup}) cannot donate to recipient with blood group (${targetReq.bloodGroup}).`,
+          'Blood Incompatible'
+        );
+        return;
+      }
+    }
+
     try {
       await respondToRequestApi(requestId, action);
       toast.success(
         `You have ${action.toLowerCase()} the emergency blood request. Hospital notified!`,
         'Response Dispatched'
       );
-    } catch (err) {
-      toast.info(
-        `You ${action.toLowerCase()} request ${requestId} (simulated response).`,
-        'Response Dispatched'
-      );
+    } catch (err: any) {
+      const msg = err?.message || `Failed to ${action.toLowerCase()} request.`;
+      toast.error(msg, 'Response Error');
     }
   };
-
-  const donorBloodGroup: BloodGroup =
-    dashboardData?.donor?.bloodGroup || (user as any)?.bloodGroup || 'O+';
 
   return (
     <div className="space-y-8">
@@ -263,34 +278,51 @@ export const DonorDashboardPage: React.FC = () => {
             <SkeletonCard />
             <SkeletonCard />
           </div>
-        ) : dashboardData?.nearbyRequests && dashboardData.nearbyRequests.length > 0 ? (
+        ) : (dashboardData?.nearbyRequests?.length > 0 || dashboardData?.nearbyCompatibleRequests?.length > 0) ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {dashboardData.nearbyRequests.map((req: any) => (
-              <EmergencyRequestCard
-                key={req.id || req._id}
-                id={req.id || req._id}
-                patientIdentifier={req.patientIdentifier}
-                bloodGroup={req.bloodGroup}
-                bloodComponent={req.bloodComponent || 'WHOLE_BLOOD'}
-                unitsRequired={req.unitsRequired}
-                urgency={req.urgency}
-                status={req.status || 'ACTIVE'}
-                hospitalName={req.hospitalName}
-                city={req.city}
-                distanceFormatted={req.distanceFormatted || 'Nearby hospital'}
-                estimatedTransitTimeMinutes={req.estimatedTransitTimeMinutes}
-                requiredWithinHours={req.requiredWithinHours}
-                notes={req.notes}
-                onAccept={() => handleRespond(req.id || req._id, 'ACCEPTED')}
-                onDecline={() => handleRespond(req.id || req._id, 'DECLINED')}
-                onViewDetails={() => {
-                  toast.info(
-                    `Details for ${req.patientIdentifier}: ${req.notes || 'Emergency transfusion'}`,
-                    'Request Details'
-                  );
-                }}
-              />
-            ))}
+            {(dashboardData.nearbyRequests || dashboardData.nearbyCompatibleRequests).map((req: any) => {
+              const hospName =
+                req.hospitalName ||
+                req.hospitalId?.hospitalName ||
+                req.hospital?.hospitalName ||
+                'Hospital information unavailable';
+
+              const hospAddress = req.hospitalAddress || req.hospitalId?.address || req.hospital?.address;
+              const hospCity =
+                req.city ||
+                (hospAddress
+                  ? [hospAddress.city, hospAddress.district || hospAddress.state].filter(Boolean).join(', ')
+                  : undefined) ||
+                'Location unavailable';
+
+              return (
+                <EmergencyRequestCard
+                  key={req.id || req._id}
+                  id={req.id || req._id}
+                  patientIdentifier={req.patientIdentifier}
+                  bloodGroup={req.bloodGroup}
+                  donorBloodGroup={donorBloodGroup}
+                  bloodComponent={req.bloodComponent || 'WHOLE_BLOOD'}
+                  unitsRequired={req.unitsRequired}
+                  urgency={req.urgency}
+                  status={req.status || 'ACTIVE'}
+                  hospitalName={hospName}
+                  city={hospCity}
+                  distanceFormatted={req.distanceFormatted}
+                  estimatedTransitTimeMinutes={req.estimatedTransitTimeMinutes}
+                  requiredWithinHours={req.requiredWithinHours}
+                  notes={req.notes}
+                  onAccept={() => handleRespond(req.id || req._id, 'ACCEPTED')}
+                  onDecline={() => handleRespond(req.id || req._id, 'DECLINED')}
+                  onViewDetails={() => {
+                    toast.info(
+                      `Hospital: ${hospName} | Location: ${hospCity} | Details: ${req.notes || 'Emergency transfusion'}`,
+                      'Request Details'
+                    );
+                  }}
+                />
+              );
+            })}
           </div>
         ) : (
           <EmptyState
