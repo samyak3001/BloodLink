@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { EmergencyRequest, HospitalProfile, Notification, AuditLog, DonorProfile } from '../models';
+import { EmergencyRequest, HospitalProfile, Notification, AuditLog, DonorProfile, DonationHistory } from '../models';
 import { findPotentialMatches } from '../services/matchingService';
 import { isBloodCompatible } from '../config/bloodCompatibility';
 import { RequestStatus, BloodGroup, BloodComponent, RequestUrgency } from '../types';
@@ -508,6 +508,57 @@ export async function updateEmergencyRequestStatus(
     request.status = targetStatus;
     await request.save();
 
+    // When a request is FULFILLED, create DonationHistory records for all accepted donors.
+    // This is the authoritative step that updates each donor's donation ledger.
+    if (targetStatus === 'FULFILLED') {
+      try {
+        const acceptedMatches = request.potentialMatches.filter(
+          (m) => m.status === 'ACCEPTED'
+        );
+
+        if (acceptedMatches.length > 0) {
+          const donationRecords = acceptedMatches.map((match) => ({
+            donorId: match.donorId,
+            hospitalId: request.hospitalId,
+            requestId: request._id,
+            bloodGroup: request.bloodGroup,
+            bloodComponent: request.bloodComponent,
+            unitsDonated: 1,
+            status: 'COMPLETED' as const,
+            donationDate: new Date(),
+            certificateId: `CERT-${Date.now()}-${match.donorId.toString().slice(-6).toUpperCase()}`,
+          }));
+
+          await DonationHistory.create(donationRecords);
+
+          // Notify each accepted donor that their donation is confirmed
+          for (const match of acceptedMatches) {
+            const donorDoc = await DonorProfile.findById(match.donorId).select('userId');
+            if (donorDoc) {
+              const donorUserId = donorDoc.userId?.toString();
+              if (donorUserId) {
+                await Notification.create({
+                  recipientId: donorUserId,
+                  type: 'DONOR_ACCEPTED',
+                  title: '🩸 Donation Completed — Thank You!',
+                  message: `Your blood donation for Emergency Request has been officially recorded and verified. Your contribution has been added to your Donation History.`,
+                  data: {
+                    requestId: request._id.toString(),
+                    bloodGroup: request.bloodGroup,
+                    bloodComponent: request.bloodComponent,
+                  },
+                });
+                void pushUnreadCount(donorUserId);
+              }
+            }
+          }
+        }
+      } catch (historyError) {
+        // Non-fatal: log but do not block the status update response
+        console.error('[DonationHistory] Failed to create donation records on FULFILLED:', historyError);
+      }
+    }
+
     // Emit real-time request:updated to all subscribers of this request room
     try {
       emitRequestUpdated(request._id.toString(), {
@@ -734,7 +785,7 @@ export async function contactAcceptedDonor(
 
     await Notification.create({
       recipientId: donorUserId,
-      type: 'HOSPITAL_CONTACT',
+      type: 'STATUS_UPDATE',
       title: `Emergency Coordination: ${hospName}`,
       message: contactMsg,
       data: {

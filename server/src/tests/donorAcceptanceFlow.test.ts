@@ -17,6 +17,7 @@ import {
   getEmergencyRequestById,
   getPotentialMatchesForRequest,
   contactAcceptedDonor,
+  updateEmergencyRequestStatus,
 } from '../controllers/emergencyRequestController';
 import {
   respondToEmergencyRequest,
@@ -66,6 +67,7 @@ vi.mock('../models/Notification', () => ({
 vi.mock('../models/DonationHistory', () => ({
   DonationHistory: {
     countDocuments: vi.fn().mockResolvedValue(0),
+    create: vi.fn().mockResolvedValue([]),
   },
 }));
 
@@ -88,6 +90,7 @@ import { HospitalProfile } from '../models/HospitalProfile';
 import { DonorProfile } from '../models/DonorProfile';
 import { User } from '../models/User';
 import { Notification } from '../models/Notification';
+import { DonationHistory } from '../models/DonationHistory';
 import * as socketService from '../services/socketService';
 
 describe('Donor ↔ Hospital Request Details & Acceptance Flow', () => {
@@ -595,7 +598,7 @@ describe('Donor ↔ Hospital Request Details & Acceptance Flow', () => {
       expect(Notification.create).toHaveBeenCalledWith(
         expect.objectContaining({
           recipientId: 'user-sarah',
-          type: 'HOSPITAL_CONTACT',
+          type: 'STATUS_UPDATE',
           message: 'Please report to Blood Bank Room 102.',
           data: expect.objectContaining({
             requestId: 'req-hospital-view',
@@ -841,6 +844,108 @@ describe('Donor ↔ Hospital Request Details & Acceptance Flow', () => {
       expect(data.requests).toHaveLength(1);
       expect(data.requests[0].bloodGroup).toBe('O+');
       expect(data.requests[0].hospitalName).toBe('Apollo Hospital');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // DonationHistory Creation on FULFILLED
+  // -------------------------------------------------------------------------
+  describe('DonationHistory: created when request is marked FULFILLED', () => {
+    it('creates DonationHistory records for all ACCEPTED donors when request is marked FULFILLED', async () => {
+      const donorA = { _id: 'donor-A', userId: 'user-donor-A' };
+      const donorB = { _id: 'donor-B', userId: 'user-donor-B' };
+
+      const mockRequest = {
+        _id: 'req-fulfill-test',
+        hospitalId: 'hosp-123',
+        patientIdentifier: 'FULFILL-TEST-001',
+        bloodGroup: 'O+',
+        bloodComponent: 'WHOLE_BLOOD',
+        unitsRequired: 2,
+        urgency: 'HIGH',
+        status: 'ACTIVE',
+        potentialMatches: [
+          { donorId: 'donor-A', status: 'ACCEPTED' },
+          { donorId: 'donor-B', status: 'ACCEPTED' },
+          { donorId: 'donor-C', status: 'DECLINED' },
+        ],
+        save: vi.fn().mockResolvedValue(true),
+      };
+
+      const mockHospital = { _id: 'hosp-123', hospitalName: 'Metro Hospital' };
+
+      vi.mocked(EmergencyRequest.findById).mockResolvedValue(mockRequest as any);
+      vi.mocked(HospitalProfile.findOne).mockResolvedValue(mockHospital as any);
+
+      // DonorProfile.findById is called once per accepted donor
+      vi.mocked(DonorProfile.findById).mockImplementation((id: any) => {
+        if (id === 'donor-A') return { select: vi.fn().mockResolvedValue(donorA) } as any;
+        if (id === 'donor-B') return { select: vi.fn().mockResolvedValue(donorB) } as any;
+        return { select: vi.fn().mockResolvedValue(null) } as any;
+      });
+
+      const req: any = {
+        params: { id: 'req-fulfill-test' },
+        body: { status: 'FULFILLED' },
+        user: { id: 'user-hosp', role: 'HOSPITAL' },
+        ip: '127.0.0.1',
+      };
+      const jsonMock = vi.fn();
+      const res: any = { status: vi.fn().mockReturnValue({ json: jsonMock }) };
+      const next = vi.fn();
+
+      await updateEmergencyRequestStatus(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+
+      // DonationHistory.create must be called with records for both ACCEPTED donors
+      expect(DonationHistory.create).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ donorId: 'donor-A', status: 'COMPLETED', bloodGroup: 'O+' }),
+          expect.objectContaining({ donorId: 'donor-B', status: 'COMPLETED', bloodGroup: 'O+' }),
+        ])
+      );
+
+      // DECLINED donor must NOT get a history record
+      const callArg = vi.mocked(DonationHistory.create).mock.calls[0][0] as any[];
+      const donorIds = callArg.map((r: any) => r.donorId);
+      expect(donorIds).not.toContain('donor-C');
+    });
+
+    it('does NOT create DonationHistory records when request is CANCELLED', async () => {
+      const mockRequest = {
+        _id: 'req-cancel-test',
+        hospitalId: 'hosp-123',
+        patientIdentifier: 'CANCEL-TEST-001',
+        bloodGroup: 'A+',
+        bloodComponent: 'WHOLE_BLOOD',
+        unitsRequired: 1,
+        urgency: 'HIGH',
+        status: 'ACTIVE',
+        potentialMatches: [{ donorId: 'donor-X', status: 'ACCEPTED' }],
+        save: vi.fn().mockResolvedValue(true),
+      };
+
+      const mockHospital = { _id: 'hosp-123', hospitalName: 'Metro Hospital' };
+      vi.mocked(EmergencyRequest.findById).mockResolvedValue(mockRequest as any);
+      vi.mocked(HospitalProfile.findOne).mockResolvedValue(mockHospital as any);
+
+      const req: any = {
+        params: { id: 'req-cancel-test' },
+        body: { status: 'CANCELLED' },
+        user: { id: 'user-hosp', role: 'HOSPITAL' },
+        ip: '127.0.0.1',
+      };
+      const jsonMock = vi.fn();
+      const res: any = { status: vi.fn().mockReturnValue({ json: jsonMock }) };
+
+      vi.mocked(DonationHistory.create).mockClear();
+
+      await updateEmergencyRequestStatus(req, res, vi.fn());
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      // DonationHistory.create must NOT be called for CANCELLED
+      expect(DonationHistory.create).not.toHaveBeenCalled();
     });
   });
 });

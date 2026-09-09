@@ -15,7 +15,15 @@ export const DonorHistoryPage: React.FC = () => {
       try {
         setIsLoading(true);
         const data = await getDonorHistoryApi();
-        setHistory(data.history || []);
+        // Normalize API response to display shape.
+        // The server returns: donationDate, hospitalId (populated object), unitsDonated
+        const normalized = (data.history || []).map((r: any) => ({
+          ...r,
+          date: r.date || (r.donationDate ? new Date(r.donationDate).toLocaleDateString('en-IN', { year: 'numeric', month: 'short', day: 'numeric' }) : 'Recent'),
+          hospitalName: r.hospitalName || r.hospitalId?.hospitalName || 'Hospital',
+          units: r.units ?? r.unitsDonated ?? 1,
+        }));
+        setHistory(normalized);
       } catch (err) {
         // Fallback demo donation history
         setHistory([
