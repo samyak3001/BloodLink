@@ -1,4 +1,5 @@
 import { authenticatedFetch } from './authApi';
+import { API_BASE_URL } from '../config/api';
 import { BloodGroup, BloodComponent, RequestUrgency, RequestStatus } from '../types';
 
 export interface CreateRequestData {
@@ -15,21 +16,21 @@ export interface CreateRequestData {
 
 export async function getEmergencyRequestsApi(params: Record<string, string> = {}) {
   const query = new URLSearchParams(params).toString();
-  const res = await authenticatedFetch(`/api/requests?${query}`);
+  const res = await authenticatedFetch(`${API_BASE_URL}/api/requests?${query}`);
   const json = await res.json();
   if (!res.ok) throw new Error(json.message || 'Failed to fetch emergency requests');
   return json;
 }
 
 export async function getEmergencyRequestByIdApi(id: string) {
-  const res = await authenticatedFetch(`/api/requests/${id}`);
+  const res = await authenticatedFetch(`${API_BASE_URL}/api/requests/${id}`);
   const json = await res.json();
   if (!res.ok) throw new Error(json.message || 'Failed to fetch emergency request');
   return json;
 }
 
 export async function createEmergencyRequestApi(data: CreateRequestData) {
-  const res = await authenticatedFetch('/api/requests', {
+  const res = await authenticatedFetch(`${API_BASE_URL}/api/requests`, {
     method: 'POST',
     body: JSON.stringify(data),
   });
@@ -39,7 +40,7 @@ export async function createEmergencyRequestApi(data: CreateRequestData) {
 }
 
 export async function updateRequestStatusApi(id: string, status: RequestStatus, reason?: string) {
-  const res = await authenticatedFetch(`/api/requests/${id}/status`, {
+  const res = await authenticatedFetch(`${API_BASE_URL}/api/requests/${id}/status`, {
     method: 'PATCH',
     body: JSON.stringify({ status, reason }),
   });
@@ -49,14 +50,14 @@ export async function updateRequestStatusApi(id: string, status: RequestStatus, 
 }
 
 export async function getPotentialMatchesApi(id: string) {
-  const res = await authenticatedFetch(`/api/requests/${id}/potential-matches`);
+  const res = await authenticatedFetch(`${API_BASE_URL}/api/requests/${id}/potential-matches`);
   const json = await res.json();
   if (!res.ok) throw new Error(json.message || 'Failed to fetch potential matches');
   return json;
 }
 
 export async function contactAcceptedDonorApi(requestId: string, donorId: string, message?: string) {
-  const res = await authenticatedFetch(`/api/requests/${requestId}/contact-donor`, {
+  const res = await authenticatedFetch(`${API_BASE_URL}/api/requests/${requestId}/contact-donor`, {
     method: 'POST',
     body: JSON.stringify({ donorId, message }),
   });

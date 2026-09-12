@@ -16,12 +16,13 @@ import { Card, CardContent } from '../../components/ui/Card';
 import { MedicalDisclaimer } from '../../components/domain/MedicalDisclaimer';
 import { ConnectionStatus } from '../../components/shared/ConnectionStatus';
 import { HealthStatus } from '../../types';
+import { API_BASE_URL } from '../../config/api';
 
 export const LandingPage: React.FC = () => {
   const [health, setHealth] = useState<HealthStatus | null>(null);
 
   useEffect(() => {
-    fetch('/api/health')
+    fetch(`${API_BASE_URL}/api/health`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => setHealth(data))
       .catch(() => setHealth(null));

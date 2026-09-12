@@ -1,7 +1,8 @@
 import { authenticatedFetch } from './authApi';
+import { API_BASE_URL } from '../config/api';
 
 export async function exportUserDataApi() {
-  const res = await authenticatedFetch('/api/users/export-data');
+  const res = await authenticatedFetch(`${API_BASE_URL}/api/users/export-data`);
   const json = await res.json();
   if (!res.ok) throw new Error(json.message || 'Failed to export user data');
   return json.data;
@@ -11,7 +12,7 @@ export async function updatePrivacySettingsApi(settings: {
   hideExactLocation?: boolean;
   showContactToMatchedHospitalsOnly?: boolean;
 }) {
-  const res = await authenticatedFetch('/api/users/privacy', {
+  const res = await authenticatedFetch(`${API_BASE_URL}/api/users/privacy`, {
     method: 'PATCH',
     body: JSON.stringify(settings),
   });
@@ -24,7 +25,7 @@ export async function changePasswordApi(passwords: {
   currentPassword: string;
   newPassword: string;
 }) {
-  const res = await authenticatedFetch('/api/users/password', {
+  const res = await authenticatedFetch(`${API_BASE_URL}/api/users/password`, {
     method: 'PUT',
     body: JSON.stringify(passwords),
   });
@@ -34,7 +35,7 @@ export async function changePasswordApi(passwords: {
 }
 
 export async function deleteAccountApi(password: string) {
-  const res = await authenticatedFetch('/api/users/account', {
+  const res = await authenticatedFetch(`${API_BASE_URL}/api/users/account`, {
     method: 'DELETE',
     body: JSON.stringify({ password }),
   });

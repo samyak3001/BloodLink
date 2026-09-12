@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState, ReactNode } from
 import { io, Socket } from 'socket.io-client';
 import { useAuth } from './AuthContext';
 import { ServerToClientEvents, ClientToServerEvents } from '../types/socket';
+import { API_BASE_URL } from '../config/api';
 
 type BloodLinkSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
@@ -18,7 +19,7 @@ export const SocketProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   const [isConnected, setIsConnected] = useState<boolean>(false);
 
   useEffect(() => {
-    const socketUrl = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000';
+    const socketUrl = import.meta.env.VITE_SOCKET_URL || API_BASE_URL;
     
     const newSocket: BloodLinkSocket = io(socketUrl, {
       auth: {
