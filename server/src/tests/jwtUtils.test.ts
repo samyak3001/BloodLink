@@ -225,6 +225,50 @@ describe('authorize() middleware — Role Enforcement', () => {
     expect(next).not.toHaveBeenCalled();
   });
 
+  describe('Security Regression — Admin Endpoint Protection (HOSPITAL & DONOR Isolation)', () => {
+    const adminEndpoints = [
+      { name: 'GET /api/admin/users', method: 'GET', path: '/api/admin/users' },
+      { name: 'PATCH /api/admin/hospitals/:id/verify', method: 'PATCH', path: '/api/admin/hospitals/hosp123/verify' },
+      { name: 'PATCH /api/admin/users/:id/status', method: 'PATCH', path: '/api/admin/users/usr123/status' },
+    ];
+
+    it.each(adminEndpoints)('blocks HOSPITAL from $name with 403 Forbidden', ({ path, method }) => {
+      const next = vi.fn() as NextFunction;
+      const req = {
+        ...makeReq(makeSafeUser('HOSPITAL')),
+        method,
+        path,
+        params: { id: 'test_id_123' },
+      };
+      const { res, ctx } = makeRes();
+
+      authorize('ADMIN')(req as unknown as Request, res as Response, next);
+
+      expect(ctx.statusCode).toBe(403);
+      expect((ctx.body as { status: string; message: string }).status).toBe('fail');
+      expect((ctx.body as { status: string; message: string }).message).toContain('Requires one of the following roles: ADMIN');
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it.each(adminEndpoints)('blocks DONOR from $name with 403 Forbidden', ({ path, method }) => {
+      const next = vi.fn() as NextFunction;
+      const req = {
+        ...makeReq(makeSafeUser('DONOR')),
+        method,
+        path,
+        params: { id: 'test_id_123' },
+      };
+      const { res, ctx } = makeRes();
+
+      authorize('ADMIN')(req as unknown as Request, res as Response, next);
+
+      expect(ctx.statusCode).toBe(403);
+      expect((ctx.body as { status: string; message: string }).status).toBe('fail');
+      expect((ctx.body as { status: string; message: string }).message).toContain('Requires one of the following roles: ADMIN');
+      expect(next).not.toHaveBeenCalled();
+    });
+  });
+
   it('returns 401 when req.user is not set (unauthenticated)', () => {
     const next = vi.fn() as NextFunction;
     const req = makeReq(undefined); // no user attached

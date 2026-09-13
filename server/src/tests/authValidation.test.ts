@@ -115,6 +115,36 @@ describe('Auth Validation Schemas — Registration & Login', () => {
         expect(result.bloodGroup).toBe(bloodGroup); // must not be coerced or changed
       }
     });
+
+    it("strictly rejects registration attempts with role 'ADMIN'", async () => {
+      const adminPayload = {
+        name: 'Attacker Admin',
+        email: 'attacker@example.com',
+        password: 'Password123!',
+        role: 'ADMIN' as const,
+        phone: '9876543210',
+      };
+
+      await expect(registerSchema.parseAsync(adminPayload)).rejects.toThrow(
+        /Role must be either 'DONOR' or 'HOSPITAL'/
+      );
+    });
+
+    it('rejects arbitrary or unrecognized roles during registration', async () => {
+      const invalidRoles = ['SUPERADMIN', 'MODERATOR', 'ROOT', 'SYSTEM', 'admin'];
+
+      for (const invalidRole of invalidRoles) {
+        const payload = {
+          name: 'Attacker',
+          email: 'attacker@example.com',
+          password: 'Password123!',
+          role: invalidRole as any,
+          phone: '9876543210',
+        };
+
+        await expect(registerSchema.parseAsync(payload)).rejects.toThrow();
+      }
+    });
   });
 
   describe('Login Validation', () => {
