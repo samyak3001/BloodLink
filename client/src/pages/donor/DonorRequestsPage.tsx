@@ -102,7 +102,7 @@ export const DonorRequestsPage: React.FC = () => {
     } else {
       getDonorDashboardApi()
         .then((data) => {
-          const fetchedBg = data?.donor?.bloodGroup || data?.bloodGroup || data?.profile?.bloodGroup;
+          const fetchedBg = data?.dashboard?.bloodGroup || data?.donor?.bloodGroup || data?.bloodGroup || data?.profile?.bloodGroup;
           if (fetchedBg) setDonorBloodGroup(fetchedBg);
         })
         .catch(() => {});

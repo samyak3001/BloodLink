@@ -10,7 +10,7 @@ import { MedicalDisclaimer } from '../../components/domain/MedicalDisclaimer';
 import { BloodGroup } from '../../types';
 
 export const DonorProfilePage: React.FC = () => {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const { toast } = useToast();
 
   const [isSavingScreening, setIsSavingScreening] = useState<boolean>(false);
@@ -47,7 +47,7 @@ export const DonorProfilePage: React.FC = () => {
     }
   };
 
-  const donorBloodGroup: BloodGroup = (user as any)?.bloodGroup || 'O+';
+  const donorBloodGroup: BloodGroup = (profile as any)?.bloodGroup || (user as any)?.bloodGroup || 'O+';
 
   return (
     <div className="max-w-4xl mx-auto space-y-8">

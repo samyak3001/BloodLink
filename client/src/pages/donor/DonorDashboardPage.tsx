@@ -22,7 +22,7 @@ import { isBloodCompatible } from '../../utils/bloodCompatibility';
 import { BloodGroup } from '../../types';
 
 export const DonorDashboardPage: React.FC = () => {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const { toast } = useToast();
 
   const [isAvailable, setIsAvailable] = useState<boolean>(true);
@@ -35,8 +35,8 @@ export const DonorDashboardPage: React.FC = () => {
       setIsLoading(true);
       const data = await getDonorDashboardApi();
       setDashboardData(data);
-      if (data.donor?.isAvailable !== undefined) {
-        setIsAvailable(data.donor.isAvailable);
+      if (data.dashboard?.isAvailable !== undefined) {
+        setIsAvailable(data.dashboard.isAvailable);
       }
     } catch (err) {
       // Fallback data for smooth development mode if backend donor profile not yet seeded
@@ -118,12 +118,12 @@ export const DonorDashboardPage: React.FC = () => {
   };
 
   const donorBloodGroup: BloodGroup =
-    dashboardData?.donor?.bloodGroup || dashboardData?.bloodGroup || dashboardData?.profile?.bloodGroup || (user as any)?.bloodGroup || 'O+';
+    dashboardData?.dashboard?.bloodGroup || dashboardData?.donor?.bloodGroup || dashboardData?.bloodGroup || dashboardData?.profile?.bloodGroup || (profile as any)?.bloodGroup || (user as any)?.bloodGroup || 'O+';
 
   const handleRespond = async (requestId: string, action: 'ACCEPTED' | 'DECLINED') => {
     const allRequests = [
-      ...(dashboardData?.nearbyRequests || []),
-      ...(dashboardData?.nearbyCompatibleRequests || []),
+      ...(dashboardData?.dashboard?.nearbyRequests || dashboardData?.nearbyRequests || []),
+      ...(dashboardData?.dashboard?.nearbyCompatibleRequests || dashboardData?.nearbyCompatibleRequests || []),
     ];
     const targetReq = allRequests.find((r: any) => (r.id || r._id) === requestId);
 
@@ -278,9 +278,9 @@ export const DonorDashboardPage: React.FC = () => {
             <SkeletonCard />
             <SkeletonCard />
           </div>
-        ) : (dashboardData?.nearbyRequests?.length > 0 || dashboardData?.nearbyCompatibleRequests?.length > 0) ? (
+        ) : ((dashboardData?.dashboard?.nearbyRequests?.length > 0 || dashboardData?.nearbyRequests?.length > 0) || (dashboardData?.dashboard?.nearbyCompatibleRequests?.length > 0 || dashboardData?.nearbyCompatibleRequests?.length > 0)) ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {(dashboardData.nearbyRequests || dashboardData.nearbyCompatibleRequests).map((req: any) => {
+            {((dashboardData.dashboard?.nearbyRequests || dashboardData.nearbyRequests) || (dashboardData.dashboard?.nearbyCompatibleRequests || dashboardData.nearbyCompatibleRequests)).map((req: any) => {
               const hospName =
                 req.hospitalName ||
                 req.hospitalId?.hospitalName ||

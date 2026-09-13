@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Unit Tests — Auth Registration & Login Schemas, Error Handling & Data Mapping
  *
  * Verifies:
@@ -92,6 +92,27 @@ describe('Auth Validation Schemas — Registration & Login', () => {
         };
 
         await expect(registerSchema.parseAsync(payload)).rejects.toThrow();
+      }
+    });
+
+    it('preserves all blood group values including negative types (O- regression test)', async () => {
+      const bloodGroups = ['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'] as const;
+
+      for (const bloodGroup of bloodGroups) {
+        const payload = {
+          name: 'Test Donor',
+          email: 'donor@example.com',
+          password: 'Password123',
+          role: 'DONOR' as const,
+          bloodGroup,
+          phone: '9876543210',
+          city: 'Nagercoil',
+          district: 'Kanyakumari',
+          postalCode: '629001',
+        };
+
+        const result = await registerSchema.parseAsync(payload);
+        expect(result.bloodGroup).toBe(bloodGroup); // must not be coerced or changed
       }
     });
   });
