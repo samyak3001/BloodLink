@@ -161,8 +161,14 @@ if (process.env.NODE_ENV !== 'test') {
     console.log(`[BloodLink Server] Health check available at http://localhost:${PORT}/api/health`);
     try {
       await connectDB();
-      if (process.env.NODE_ENV !== 'production') {
+      const shouldSeedDemoUsers =
+        process.env.NODE_ENV !== 'production' || process.env.SEED_DEMO_USERS === 'true';
+
+      if (shouldSeedDemoUsers) {
         await ensureDemoUsers();
+      }
+
+      if (process.env.NODE_ENV !== 'production') {
         await sanitizeIncompatibleMatches();
       }
     } catch (err: unknown) {

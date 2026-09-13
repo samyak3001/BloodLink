@@ -162,4 +162,22 @@ describe('Quick Demo Accounts — Seed Verification & Security', () => {
       expect(parsed.password).toBe('Password123!');
     }
   });
+
+  it('guarantees the 3 designated production demo accounts are accurately configured in DEMO_CREDENTIALS', () => {
+    // 1. Demo Donor
+    expect(DEMO_CREDENTIALS.donorAlex.email).toBe('alex.donor@example.com');
+    expect(DEMO_CREDENTIALS.donorAlex.role).toBe('DONOR');
+    expect(DEMO_CREDENTIALS.donorAlex.bloodGroup).toBe('O-');
+    expect(DEMO_CREDENTIALS.donorAlex.password).toBe('Password123!');
+
+    // 2. Demo Hospital
+    expect(DEMO_CREDENTIALS.hospitalMetro.email).toBe('metro.hospital@bloodlink.org');
+    expect(DEMO_CREDENTIALS.hospitalMetro.role).toBe('HOSPITAL');
+    expect(DEMO_CREDENTIALS.hospitalMetro.password).toBe('Password123!');
+
+    // 3. Demo Admin
+    expect(DEMO_CREDENTIALS.admin.email).toBe('admin@bloodlink.org');
+    expect(DEMO_CREDENTIALS.admin.role).toBe('ADMIN');
+    expect(DEMO_CREDENTIALS.admin.password).toBe('Password123!');
+  });
 });

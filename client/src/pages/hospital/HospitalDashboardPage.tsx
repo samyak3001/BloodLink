@@ -7,6 +7,7 @@ import {
   Users,
   ArrowRight,
   ShieldCheck,
+  Clock,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { getHospitalDashboardApi } from '../../api/hospitalsApi';
@@ -95,10 +96,17 @@ export const HospitalDashboardPage: React.FC = () => {
             <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
               {user?.name || 'Healthcare Emergency Facility'}
             </h1>
-            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-clinical-50 text-clinical-700 border border-clinical-200">
-              <ShieldCheck className="h-3.5 w-3.5" />
-              Verified Facility
-            </span>
+            {dashboardData?.dashboard?.hospital?.isVerifiedByAdmin ?? (user as any)?.isVerified ? (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-vitality-50 text-vitality-700 border border-vitality-200">
+                <ShieldCheck className="h-3.5 w-3.5" />
+                Verified Facility
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                <Clock className="h-3.5 w-3.5" />
+                Pending Verification
+              </span>
+            )}
           </div>
           <p className="text-xs text-slate-500">
             Emergency Blood Request Coordination & Real-Time Donor Dispatch Dashboard

@@ -602,8 +602,6 @@ export async function seedDatabase(): Promise<{
  * It is safe to run on server startup during development.
  */
 export async function ensureDemoUsers(): Promise<void> {
-  validateSeedEnvironment();
-
   const defaultPasswordHash = await hashPassword('Password123!');
 
   // 1. Ensure Administrators

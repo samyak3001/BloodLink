@@ -116,12 +116,42 @@ export async function getAdminUsers(
       User.countDocuments(query),
     ]);
 
+    // Attach profile details for rich admin management (e.g. hospital license and verification)
+    const userIds = users.map((u) => u._id);
+    const [hospitalProfiles, donorProfiles] = await Promise.all([
+      HospitalProfile.find({ userId: { $in: userIds } }),
+      DonorProfile.find({ userId: { $in: userIds } }),
+    ]);
+
+    const hospitalMap = new Map(hospitalProfiles.map((hp) => [hp.userId.toString(), hp]));
+    const donorMap = new Map(donorProfiles.map((dp) => [dp.userId.toString(), dp]));
+
+    const enrichedUsers = users.map((u) => {
+      const safe = u.toSafeObject();
+      const hp = hospitalMap.get(u._id.toString());
+      const dp = donorMap.get(u._id.toString());
+
+      if (hp) {
+        safe.hospitalProfileId = hp._id.toString();
+        safe.hospitalName = hp.hospitalName;
+        safe.licenseNumber = hp.licenseNumber;
+        safe.isVerified = hp.isVerifiedByAdmin;
+        safe.city = hp.address?.city;
+      } else if (dp) {
+        safe.donorProfileId = dp._id.toString();
+        safe.bloodGroup = dp.bloodGroup;
+        safe.city = dp.address?.city;
+      }
+
+      return safe;
+    });
+
     res.status(200).json({
       status: 'success',
       totalCount,
       page: pageNumber,
       totalPages: Math.ceil(totalCount / pageSize),
-      users: users.map((u) => u.toSafeObject()),
+      users: enrichedUsers,
     });
   } catch (error) {
     next(error);
@@ -180,7 +210,12 @@ export async function verifyHospital(
     const { id } = req.params;
     const { isVerified, adminNotes } = req.body as { isVerified: boolean; adminNotes?: string };
 
-    const hospital = await HospitalProfile.findById(id);
+    // Accept either HospitalProfile._id or associated User._id
+    let hospital = await HospitalProfile.findById(id);
+    if (!hospital) {
+      hospital = await HospitalProfile.findOne({ userId: id });
+    }
+
     if (!hospital) {
       res.status(404).json({ status: 'fail', message: 'Hospital profile not found.' });
       return;
@@ -188,6 +223,9 @@ export async function verifyHospital(
 
     hospital.isVerifiedByAdmin = isVerified;
     await hospital.save();
+
+    // Synchronize the parent User account's isVerified flag
+    await User.findByIdAndUpdate(hospital.userId, { isVerified });
 
     await AuditLog.create({
       actorId: req.user!.id,
