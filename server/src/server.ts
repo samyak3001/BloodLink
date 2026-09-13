@@ -39,7 +39,7 @@ app.use(
         connectSrc: [
           "'self'",
           ...(normalizedClientUrl ? [normalizedClientUrl] : []),
-          'https://bloodlink-frontend-qagx.onrender.com',
+          'https://bloodlink-frontend-gaqx.onrender.com',
           'http://localhost:5000',
           'ws://localhost:5000',
         ],
@@ -57,7 +57,7 @@ const allowedOrigins = Array.from(
   new Set(
     [
       normalizedClientUrl,
-      'https://bloodlink-frontend-qagx.onrender.com',
+      'https://bloodlink-frontend-gaqx.onrender.com',
       'http://localhost:5173',
       'http://127.0.0.1:5173',
     ].filter((url): url is string => Boolean(url))

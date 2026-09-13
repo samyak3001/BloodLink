@@ -41,7 +41,7 @@ export function initSocketIO(httpServer: HttpServer): BloodLinkIO {
     new Set(
       [
         normalizedClientUrl,
-        'https://bloodlink-frontend-qagx.onrender.com',
+        'https://bloodlink-frontend-gaqx.onrender.com',
         'http://localhost:5173',
         'http://127.0.0.1:5173',
       ].filter((url): url is string => Boolean(url))
