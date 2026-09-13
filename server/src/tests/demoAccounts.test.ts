@@ -180,4 +180,60 @@ describe('Quick Demo Accounts — Seed Verification & Security', () => {
     expect(DEMO_CREDENTIALS.admin.role).toBe('ADMIN');
     expect(DEMO_CREDENTIALS.admin.password).toBe('Password123!');
   });
+
+  describe('Hospital Verification Badge Logic Requirements', () => {
+    // Pure function representing the fixed badge rendering condition in HospitalDashboardPage:
+    // dashboardData?.dashboard?.hospital?.isVerifiedByAdmin === true
+    function getVerificationBadgeStatus(dashboardData: any): 'Verified Facility' | 'Pending Verification' {
+      if (dashboardData?.dashboard?.hospital?.isVerifiedByAdmin === true) {
+        return 'Verified Facility';
+      }
+      return 'Pending Verification';
+    }
+
+    it('evaluates to "Verified Facility" ONLY when isVerifiedByAdmin === true', () => {
+      const data = {
+        dashboard: {
+          hospital: {
+            isVerifiedByAdmin: true,
+          },
+        },
+      };
+      expect(getVerificationBadgeStatus(data)).toBe('Verified Facility');
+    });
+
+    it('evaluates to "Pending Verification" when isVerifiedByAdmin === false', () => {
+      const data = {
+        dashboard: {
+          hospital: {
+            isVerifiedByAdmin: false,
+          },
+        },
+      };
+      expect(getVerificationBadgeStatus(data)).toBe('Pending Verification');
+    });
+
+    it('evaluates to "Pending Verification" and NOT "Verified Facility" when data is missing or undefined', () => {
+      expect(getVerificationBadgeStatus(null)).toBe('Pending Verification');
+      expect(getVerificationBadgeStatus(undefined)).toBe('Pending Verification');
+      expect(getVerificationBadgeStatus({})).toBe('Pending Verification');
+      expect(getVerificationBadgeStatus({ dashboard: {} })).toBe('Pending Verification');
+      expect(getVerificationBadgeStatus({ dashboard: { hospital: {} } })).toBe('Pending Verification');
+      expect(getVerificationBadgeStatus({ dashboard: { hospital: { isVerifiedByAdmin: undefined } } })).toBe('Pending Verification');
+    });
+
+    it('never falls back to a truthy user.isVerified or stats.isVerified on error/fallback data', () => {
+      // Simulating error catch block returning null
+      const errorData = null;
+      expect(getVerificationBadgeStatus(errorData)).toBe('Pending Verification');
+
+      // Simulating an object with legacy stats.isVerified = true
+      const legacyFallback = {
+        stats: {
+          isVerified: true,
+        },
+      };
+      expect(getVerificationBadgeStatus(legacyFallback)).toBe('Pending Verification');
+    });
+  });
 });

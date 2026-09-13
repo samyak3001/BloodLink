@@ -35,50 +35,11 @@ export const HospitalDashboardPage: React.FC = () => {
         const data = await getHospitalDashboardApi();
         setDashboardData(data);
       } catch (err) {
-        // Fallback demo dashboard state
-        setDashboardData({
-          stats: {
-            activeRequests: 2,
-            matchedDonors: 6,
-            fulfilledRequests: 14,
-            isVerified: true,
-          },
-          recentRequests: [
-            {
-              id: 'req-2026-001',
-              patientIdentifier: 'EMERGENCY-TRAUMA-91',
-              bloodGroup: 'O-',
-              bloodComponent: 'WHOLE_BLOOD',
-              unitsRequired: 3,
-              urgency: 'CRITICAL',
-              status: 'ACTIVE',
-              createdAt: '25 mins ago',
-              matchedCount: 3,
-            },
-            {
-              id: 'req-2026-002',
-              patientIdentifier: 'ICU-SURGICAL-02',
-              bloodGroup: 'A+',
-              bloodComponent: 'PLATELETS',
-              unitsRequired: 2,
-              urgency: 'HIGH',
-              status: 'MATCHED',
-              createdAt: '2 hours ago',
-              matchedCount: 4,
-            },
-            {
-              id: 'req-2026-003',
-              patientIdentifier: 'MATERNITY-08',
-              bloodGroup: 'B+',
-              bloodComponent: 'WHOLE_BLOOD',
-              unitsRequired: 1,
-              urgency: 'MEDIUM',
-              status: 'FULFILLED',
-              createdAt: 'Yesterday',
-              matchedCount: 2,
-            },
-          ],
-        });
+        // On API failure, leave dashboardData as null.
+        // Stats cards use safe ?? fallbacks; recentRequests renders EmptyState when null.
+        // Critically: no verification state is fabricated here — the badge must only
+        // reflect the authoritative server value (HospitalProfile.isVerifiedByAdmin).
+        setDashboardData(null);
       } finally {
         setIsLoading(false);
       }
@@ -96,7 +57,10 @@ export const HospitalDashboardPage: React.FC = () => {
             <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
               {user?.name || 'Healthcare Emergency Facility'}
             </h1>
-            {dashboardData?.dashboard?.hospital?.isVerifiedByAdmin ?? (user as any)?.isVerified ? (
+            {/* Verification badge: reads ONLY the authoritative HospitalProfile.isVerifiedByAdmin
+                value returned by the server. Never falls back to User.isVerified, which is a
+                different field and was causing newly registered hospitals to appear as Verified. */}
+            {dashboardData?.dashboard?.hospital?.isVerifiedByAdmin === true ? (
               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-vitality-50 text-vitality-700 border border-vitality-200">
                 <ShieldCheck className="h-3.5 w-3.5" />
                 Verified Facility
