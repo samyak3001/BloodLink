@@ -24,7 +24,8 @@ dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
+const rawClientUrl = (process.env.CLIENT_URL || '').trim();
+const normalizedClientUrl = rawClientUrl ? rawClientUrl.replace(/\/+$/, '') : null;
 
 // Security Headers with Helmet
 app.use(
@@ -35,7 +36,13 @@ app.use(
         scriptSrc: ["'self'", "'unsafe-inline'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", 'data:', 'https:'],
-        connectSrc: ["'self'", CLIENT_URL, 'http://localhost:5000', 'ws://localhost:5000'],
+        connectSrc: [
+          "'self'",
+          ...(normalizedClientUrl ? [normalizedClientUrl] : []),
+          'https://bloodlink-frontend-qagx.onrender.com',
+          'http://localhost:5000',
+          'ws://localhost:5000',
+        ],
         fontSrc: ["'self'", 'https:'],
         objectSrc: ["'none'"],
         frameAncestors: ["'none'"],
@@ -49,13 +56,11 @@ app.use(
 const allowedOrigins = Array.from(
   new Set(
     [
-      process.env.CLIENT_URL,
+      normalizedClientUrl,
       'https://bloodlink-frontend-qagx.onrender.com',
       'http://localhost:5173',
       'http://127.0.0.1:5173',
-    ]
-      .filter(Boolean)
-      .map((url) => (url as string).replace(/\/+$/, ''))
+    ].filter((url): url is string => Boolean(url))
   )
 );
 

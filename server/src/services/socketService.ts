@@ -34,16 +34,17 @@ let io: BloodLinkIO | null = null;
  * and all real-time event listeners.
  */
 export function initSocketIO(httpServer: HttpServer): BloodLinkIO {
+  const rawClientUrl = (process.env.CLIENT_URL || '').trim();
+  const normalizedClientUrl = rawClientUrl ? rawClientUrl.replace(/\/+$/, '') : null;
+
   const allowedOrigins = Array.from(
     new Set(
       [
-        process.env.CLIENT_URL,
+        normalizedClientUrl,
         'https://bloodlink-frontend-qagx.onrender.com',
         'http://localhost:5173',
         'http://127.0.0.1:5173',
-      ]
-        .filter(Boolean)
-        .map((url) => (url as string).replace(/\/+$/, ''))
+      ].filter((url): url is string => Boolean(url))
     )
   );
 
