@@ -46,24 +46,39 @@ app.use(
 );
 
 // Strict CORS Configuration
-const allowedOrigins = [
-  CLIENT_URL,
-  'http://localhost:5173',
-  'http://127.0.0.1:5173',
-];
-
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error('Origin not allowed by BloodLink CORS security policy'));
-      }
-    },
-    credentials: true,
-  })
+const allowedOrigins = Array.from(
+  new Set(
+    [
+      process.env.CLIENT_URL,
+      'https://bloodlink-frontend-qagx.onrender.com',
+      'http://localhost:5173',
+      'http://127.0.0.1:5173',
+    ]
+      .filter(Boolean)
+      .map((url) => (url as string).replace(/\/+$/, ''))
+  )
 );
+
+const corsOptions: cors.CorsOptions = {
+  origin: (origin, callback) => {
+    if (!origin) {
+      return callback(null, true);
+    }
+    const normalizedOrigin = origin.replace(/\/+$/, '');
+    if (allowedOrigins.includes(normalizedOrigin)) {
+      callback(null, true);
+    } else {
+      callback(new Error(`Origin ${origin} not allowed by BloodLink CORS security policy`));
+    }
+  },
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+  optionsSuccessStatus: 204,
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 // Body Parsers
 app.use(express.json({ limit: '1mb' }));

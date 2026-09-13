@@ -34,7 +34,18 @@ let io: BloodLinkIO | null = null;
  * and all real-time event listeners.
  */
 export function initSocketIO(httpServer: HttpServer): BloodLinkIO {
-  const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
+  const allowedOrigins = Array.from(
+    new Set(
+      [
+        process.env.CLIENT_URL,
+        'https://bloodlink-frontend-qagx.onrender.com',
+        'http://localhost:5173',
+        'http://127.0.0.1:5173',
+      ]
+        .filter(Boolean)
+        .map((url) => (url as string).replace(/\/+$/, ''))
+    )
+  );
 
   io = new SocketIOServer<
     ClientToServerEvents,
@@ -43,8 +54,19 @@ export function initSocketIO(httpServer: HttpServer): BloodLinkIO {
     SocketData
   >(httpServer, {
     cors: {
-      origin: [CLIENT_URL, 'http://localhost:5173', 'http://127.0.0.1:5173'],
+      origin: (origin, callback) => {
+        if (!origin) {
+          return callback(null, true);
+        }
+        const normalizedOrigin = origin.replace(/\/+$/, '');
+        if (allowedOrigins.includes(normalizedOrigin)) {
+          callback(null, true);
+        } else {
+          callback(new Error(`Origin ${origin} not allowed by Socket.IO CORS security policy`));
+        }
+      },
       methods: ['GET', 'POST'],
+      allowedHeaders: ['Content-Type', 'Authorization'],
       credentials: true,
     },
     transports: ['websocket', 'polling'],
