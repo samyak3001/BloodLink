@@ -25,7 +25,8 @@ export const SocketProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       auth: {
         token: token || undefined
       },
-      transports: ['websocket', 'polling'],
+      transports: ['polling', 'websocket'],
+      upgrade: true,
       autoConnect: true
     });
 

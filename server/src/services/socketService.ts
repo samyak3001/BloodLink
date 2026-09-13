@@ -70,7 +70,7 @@ export function initSocketIO(httpServer: HttpServer): BloodLinkIO {
       allowedHeaders: ['Content-Type', 'Authorization'],
       credentials: true,
     },
-    transports: ['websocket', 'polling'],
+    transports: ['polling', 'websocket'],
   });
 
   // -------------------------------------------------------------------
