@@ -51,6 +51,17 @@ export async function createEmergencyRequest(
       return;
     }
 
+    // Security Gate: Medical facilities must be verified by platform administrator
+    // before dispatching live emergency blood requests to donors.
+    if (hospital.isVerifiedByAdmin !== true) {
+      res.status(403).json({
+        status: 'fail',
+        message:
+          'Your hospital account is pending admin verification. Emergency request creation is restricted to verified facilities.',
+      });
+      return;
+    }
+
     const {
       patientIdentifier,
       bloodGroup,

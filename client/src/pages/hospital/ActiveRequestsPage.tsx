@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { PlusCircle, Search, RefreshCw, Eye } from 'lucide-react';
-import { getHospitalRequestsApi } from '../../api/hospitalsApi';
+import { getHospitalDashboardApi, getHospitalRequestsApi } from '../../api/hospitalsApi';
 import { updateRequestStatusApi } from '../../api/requestsApi';
 import { useToast } from '../../components/feedback';
 import { Button } from '../../components/ui/Button';
@@ -19,12 +19,25 @@ export const ActiveRequestsPage: React.FC = () => {
 
   const [requests, setRequests] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isVerified, setIsVerified] = useState<boolean | null>(null);
   const [selectedStatus, setSelectedStatus] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // Status transition modal
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pendingUpdate, setPendingUpdate] = useState<{ id: string; status: RequestStatus } | null>(null);
+
+  useEffect(() => {
+    const checkVerification = async () => {
+      try {
+        const dash = await getHospitalDashboardApi();
+        setIsVerified(dash?.dashboard?.hospital?.isVerifiedByAdmin === true);
+      } catch {
+        setIsVerified(false);
+      }
+    };
+    checkVerification();
+  }, []);
 
   const fetchRequests = async () => {
     try {
@@ -155,11 +168,24 @@ export const ActiveRequestsPage: React.FC = () => {
           >
             Refresh
           </Button>
-          <Link to="/hospital/requests/new">
-            <Button variant="primary" size="sm" leftIcon={<PlusCircle className="h-4 w-4" />}>
+          {isVerified === true ? (
+            <Link to="/hospital/requests/new">
+              <Button variant="primary" size="sm" leftIcon={<PlusCircle className="h-4 w-4" />}>
+                Create Request
+              </Button>
+            </Link>
+          ) : (
+            <Button
+              variant="primary"
+              size="sm"
+              leftIcon={<PlusCircle className="h-4 w-4" />}
+              disabled
+              title="Facility verification pending. Emergency requests can be dispatched once verified by an administrator."
+              className="opacity-60 cursor-not-allowed"
+            >
               Create Request
             </Button>
-          </Link>
+          )}
         </div>
       </div>
 

@@ -13,6 +13,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
+  createEmergencyRequest,
   getEmergencyRequests,
   getEmergencyRequestById,
   getPotentialMatchesForRequest,
@@ -48,6 +49,7 @@ vi.mock('../models/DonorProfile', () => ({
   DonorProfile: {
     findOne: vi.fn(),
     findById: vi.fn(),
+    find: vi.fn(),
   },
 }));
 
@@ -946,6 +948,120 @@ describe('Donor ↔ Hospital Request Details & Acceptance Flow', () => {
       expect(res.status).toHaveBeenCalledWith(200);
       // DonationHistory.create must NOT be called for CANCELLED
       expect(DonationHistory.create).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Hospital Verification Gate: createEmergencyRequest
+  // -------------------------------------------------------------------------
+  describe('Hospital Verification Gate — createEmergencyRequest', () => {
+    const validRequestBody = {
+      patientIdentifier: 'ER-TEST-99',
+      bloodGroup: 'O-',
+      bloodComponent: 'WHOLE_BLOOD',
+      unitsRequired: 2,
+      urgency: 'CRITICAL',
+      requiredWithinHours: 3,
+      maxRadiusKm: 25,
+    };
+
+    it('rejects an unverified HOSPITAL (isVerifiedByAdmin: false) with HTTP 403', async () => {
+      const unverifiedHospital = {
+        _id: 'hosp-unverified-1',
+        userId: 'user-hosp-unverified',
+        hospitalName: 'Unverified Test Hospital',
+        isVerifiedByAdmin: false,
+        location: { type: 'Point', coordinates: [80.27, 13.08] },
+        address: { city: 'Chennai' },
+      };
+
+      vi.mocked(HospitalProfile.findOne).mockResolvedValue(unverifiedHospital as any);
+
+      const req: any = {
+        body: validRequestBody,
+        user: { id: 'user-hosp-unverified', role: 'HOSPITAL' },
+        ip: '127.0.0.1',
+      };
+      const jsonMock = vi.fn();
+      const res: any = { status: vi.fn().mockReturnValue({ json: jsonMock }) };
+
+      await createEmergencyRequest(req, res, vi.fn());
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(jsonMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'fail',
+          message: expect.stringContaining('pending admin verification'),
+        })
+      );
+      // Must not create an EmergencyRequest document
+      expect(EmergencyRequest.create).not.toHaveBeenCalled();
+    });
+
+    it('allows a verified HOSPITAL (isVerifiedByAdmin: true) to create an emergency request', async () => {
+      const verifiedHospital = {
+        _id: 'hosp-verified-1',
+        userId: 'user-hosp-verified',
+        hospitalName: 'Metro Life Hospital',
+        isVerifiedByAdmin: true,
+        location: { type: 'Point', coordinates: [80.27, 13.08] },
+        address: { city: 'Chennai', district: 'Chennai', state: 'TN', postalCode: '600001' },
+      };
+
+      const createdDoc = {
+        _id: 'req-new-123',
+        ...validRequestBody,
+        hospitalId: verifiedHospital._id,
+        status: 'ACTIVE',
+        potentialMatches: [],
+        toObject: () => ({
+          _id: 'req-new-123',
+          ...validRequestBody,
+          hospitalId: verifiedHospital._id,
+          status: 'ACTIVE',
+        }),
+      };
+
+      vi.mocked(HospitalProfile.findOne).mockResolvedValue(verifiedHospital as any);
+      vi.mocked(EmergencyRequest.create).mockResolvedValue(createdDoc as any);
+      vi.mocked(DonorProfile.find).mockResolvedValue([]);
+
+      const req: any = {
+        body: validRequestBody,
+        user: { id: 'user-hosp-verified', role: 'HOSPITAL' },
+        ip: '127.0.0.1',
+      };
+      const jsonMock = vi.fn();
+      const res: any = { status: vi.fn().mockReturnValue({ json: jsonMock }) };
+
+      await createEmergencyRequest(req, res, vi.fn());
+
+      expect(res.status).toHaveBeenCalledWith(201);
+      expect(jsonMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'success',
+        })
+      );
+    });
+
+    it('rejects non-hospital users (e.g. DONOR) with HTTP 403', async () => {
+      const req: any = {
+        body: validRequestBody,
+        user: { id: 'user-donor-1', role: 'DONOR' },
+        ip: '127.0.0.1',
+      };
+      const jsonMock = vi.fn();
+      const res: any = { status: vi.fn().mockReturnValue({ json: jsonMock }) };
+
+      await createEmergencyRequest(req, res, vi.fn());
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(jsonMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'fail',
+          message: expect.stringContaining('Only registered hospitals'),
+        })
+      );
     });
   });
 });

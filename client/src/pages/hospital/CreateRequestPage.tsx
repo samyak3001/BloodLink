@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import {
   Activity,
@@ -6,9 +6,11 @@ import {
   MapPin,
   Clock,
   ArrowLeft,
+  AlertTriangle,
 } from 'lucide-react';
 import { useToast } from '../../components/feedback';
 import { createEmergencyRequestApi } from '../../api/requestsApi';
+import { getHospitalDashboardApi } from '../../api/hospitalsApi';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Select } from '../../components/ui/Select';
@@ -30,10 +32,34 @@ export const CreateRequestPage: React.FC = () => {
   const [notes, setNotes] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isVerified, setIsVerified] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    const checkVerification = async () => {
+      try {
+        const data = await getHospitalDashboardApi();
+        setIsVerified(data?.dashboard?.hospital?.isVerifiedByAdmin === true);
+      } catch {
+        setIsVerified(false);
+      }
+    };
+    checkVerification();
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+
+    if (isVerified === false) {
+      setError(
+        'Your hospital account is pending admin verification. Emergency request creation is restricted to verified facilities.'
+      );
+      toast.error(
+        'Account verification required before creating emergency requests.',
+        'Verification Pending'
+      );
+      return;
+    }
 
     if (!patientIdentifier) {
       setError('Please provide a patient or case reference identifier.');
@@ -110,6 +136,18 @@ export const CreateRequestPage: React.FC = () => {
 
         <CardContent className="pt-6">
           <form onSubmit={handleSubmit} className="space-y-5">
+            {isVerified === false && (
+              <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 flex items-start gap-3">
+                <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="text-xs font-bold text-amber-900">Facility Verification Pending</p>
+                  <p className="text-xs text-amber-700 leading-relaxed">
+                    Your medical facility is currently under administrator review. Emergency blood requests can be dispatched immediately once your facility license is approved.
+                  </p>
+                </div>
+              </div>
+            )}
+
             {error && (
               <div className="p-3.5 rounded-xl bg-emergency-50 border border-emergency-200 text-xs text-emergency-800 font-medium">
                 {error}
@@ -235,6 +273,13 @@ export const CreateRequestPage: React.FC = () => {
                 fullWidth
                 size="lg"
                 isLoading={isLoading}
+                disabled={isVerified === false}
+                title={
+                  isVerified === false
+                    ? 'Facility verification pending. Emergency requests can be dispatched once verified by an administrator.'
+                    : undefined
+                }
+                className={isVerified === false ? 'opacity-60 cursor-not-allowed' : undefined}
                 leftIcon={<PlusCircle className="h-5 w-5" />}
               >
                 Dispatch Emergency Request Live

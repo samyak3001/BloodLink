@@ -77,16 +77,34 @@ export const HospitalDashboardPage: React.FC = () => {
           </p>
         </div>
 
-        <Link to="/hospital/requests/new">
-          <Button
-            size="md"
-            variant="primary"
-            leftIcon={<PlusCircle className="h-4 w-4" />}
-            className="shadow-soft"
-          >
-            Create Emergency Request
-          </Button>
-        </Link>
+        {dashboardData?.dashboard?.hospital?.isVerifiedByAdmin === true ? (
+          <Link to="/hospital/requests/new">
+            <Button
+              size="md"
+              variant="primary"
+              leftIcon={<PlusCircle className="h-4 w-4" />}
+              className="shadow-soft"
+            >
+              Create Emergency Request
+            </Button>
+          </Link>
+        ) : (
+          <div className="flex flex-col items-end gap-1">
+            <Button
+              size="md"
+              variant="primary"
+              leftIcon={<PlusCircle className="h-4 w-4" />}
+              disabled
+              title="Facility verification pending. Emergency requests can be dispatched once verified by an administrator."
+              className="shadow-soft opacity-60 cursor-not-allowed"
+            >
+              Create Emergency Request
+            </Button>
+            <span className="text-[11px] font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+              Facility verification pending. Emergency requests can be dispatched once verified by an administrator.
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Metrics Grid */}
