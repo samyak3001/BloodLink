@@ -9,6 +9,11 @@ import { SkeletonTable } from '../../components/ui/Skeleton';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { Modal } from '../../components/ui/Modal';
 
+const getHospitalId = (h: any): string => {
+  if (!h) return '';
+  return String(h._id || h.id || h.hospitalProfileId || '');
+};
+
 export const AdminHospitalsPage: React.FC = () => {
   const { toast } = useToast();
 
@@ -29,42 +34,58 @@ export const AdminHospitalsPage: React.FC = () => {
       const data = await getAdminUsersApi({ role: 'HOSPITAL' });
       setHospitals(data.users || []);
     } catch (err) {
-      // Fallback demo hospitals
+      // Fallback demo hospitals with consistent unique identity keys
       setHospitals([
         {
+          _id: 'h-1',
           id: 'h-1',
+          hospitalProfileId: 'hp-1',
+          hospitalName: 'Apollo Emergency Trauma Center',
           name: 'Apollo Emergency Trauma Center',
           email: 'apollo@bloodlink.org',
           licenseNumber: 'HOSP-LIC-1002',
           city: 'Central Metropolis',
           isVerified: true,
+          isVerifiedByAdmin: true,
           createdAt: '2026-03-10',
         },
         {
+          _id: 'h-2',
           id: 'h-2',
+          hospitalProfileId: 'hp-2',
+          hospitalName: 'St. Jude Heart & Trauma Institute',
           name: 'St. Jude Heart & Trauma Institute',
           email: 'stjude@bloodlink.org',
           licenseNumber: 'HOSP-LIC-8819',
           city: 'Metro West Corridor',
           isVerified: true,
+          isVerifiedByAdmin: true,
           createdAt: '2026-04-14',
         },
         {
+          _id: 'h-3',
           id: 'h-3',
+          hospitalProfileId: 'hp-3',
+          hospitalName: 'City Care Emergency Hospital',
           name: 'City Care Emergency Hospital',
           email: 'citycare@example.com',
           licenseNumber: 'HOSP-LIC-4491',
           city: 'East Health Hub',
           isVerified: false,
+          isVerifiedByAdmin: false,
           createdAt: '2026-08-30',
         },
         {
+          _id: 'h-4',
           id: 'h-4',
+          hospitalProfileId: 'hp-4',
+          hospitalName: 'Green Valley Community Clinic',
           name: 'Green Valley Community Clinic',
           email: 'greenvalley@example.com',
           licenseNumber: 'CLINIC-LIC-002',
           city: 'Valley Region',
           isVerified: false,
+          isVerifiedByAdmin: false,
           createdAt: '2026-09-01',
         },
       ]);
@@ -88,35 +109,48 @@ export const AdminHospitalsPage: React.FC = () => {
     e.preventDefault();
     if (!targetHospital) return;
 
+    const targetId = getHospitalId(targetHospital);
+    if (!targetId) {
+      toast.error('Unable to resolve a valid hospital identifier.', 'Verification Error');
+      return;
+    }
+
     try {
       setIsSubmitting(true);
-      await verifyHospitalApi(
-        targetHospital.id || targetHospital._id,
-        targetAction,
-        adminNotes
-      );
+      await verifyHospitalApi(targetId, targetAction, adminNotes);
+
+      const facilityName = targetHospital.hospitalName || targetHospital.name || 'Facility';
       toast.success(
-        `Facility "${targetHospital.name}" has been ${targetAction ? 'verified' : 'unverified'}.`,
+        `Facility "${facilityName}" has been ${targetAction ? 'verified' : 'unverified'}.`,
         'Verification Updated'
       );
+
+      // Explicitly update ONLY the selected hospital record in state by unique ID
       setHospitals((prev) =>
-        prev.map((h) =>
-          h.id === targetHospital.id || h._id === targetHospital.id
-            ? { ...h, isVerified: targetAction }
-            : h
-        )
+        prev.map((h) => {
+          const hId = getHospitalId(h);
+          const isTarget =
+            Boolean(targetId) &&
+            (hId === targetId ||
+              (Boolean(targetHospital._id) && (h._id === targetHospital._id || h.id === targetHospital._id)) ||
+              (Boolean(targetHospital.hospitalProfileId) &&
+                h.hospitalProfileId &&
+                h.hospitalProfileId === targetHospital.hospitalProfileId));
+
+          if (isTarget) {
+            return {
+              ...h,
+              isVerified: targetAction,
+              isVerifiedByAdmin: targetAction,
+            };
+          }
+          return h;
+        })
       );
-    } catch (err) {
-      toast.info(
-        `Facility marked as ${targetAction ? 'verified' : 'unverified'} (simulated).`,
-        'Verification Saved'
-      );
-      setHospitals((prev) =>
-        prev.map((h) =>
-          h.id === targetHospital.id || h._id === targetHospital.id
-            ? { ...h, isVerified: targetAction }
-            : h
-        )
+    } catch (err: any) {
+      toast.error(
+        err.message || `Failed to update verification status for ${targetHospital.hospitalName || targetHospital.name || 'facility'}.`,
+        'Verification Error'
       );
     } finally {
       setIsSubmitting(false);
@@ -128,11 +162,12 @@ export const AdminHospitalsPage: React.FC = () => {
   const filteredHospitals = hospitals.filter((h) => {
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
+    const facilityName = (h.hospitalName || h.name || '').toLowerCase();
     return (
-      h.name?.toLowerCase().includes(q) ||
-      h.email?.toLowerCase().includes(q) ||
-      h.city?.toLowerCase().includes(q) ||
-      h.licenseNumber?.toLowerCase().includes(q)
+      facilityName.includes(q) ||
+      (h.email && h.email.toLowerCase().includes(q)) ||
+      (h.city && h.city.toLowerCase().includes(q)) ||
+      (h.licenseNumber && h.licenseNumber.toLowerCase().includes(q))
     );
   });
 
@@ -186,8 +221,9 @@ export const AdminHospitalsPage: React.FC = () => {
           </TableHeader>
           <TableBody>
             {filteredHospitals.map((h: any) => {
-              const hId = h.id || h._id;
-              const isVerified = h.isVerified !== false;
+              const hId = getHospitalId(h);
+              const isVerified = h.isVerified === true || h.isVerifiedByAdmin === true;
+              const facilityName = h.hospitalName || h.name || 'Healthcare Facility';
 
               return (
                 <TableRow key={hId}>
@@ -197,7 +233,7 @@ export const AdminHospitalsPage: React.FC = () => {
                         <Building2 className="h-4 w-4" />
                       </div>
                       <div>
-                        <p className="font-bold text-slate-900 text-xs">{h.name}</p>
+                        <p className="font-bold text-slate-900 text-xs">{facilityName}</p>
                         <p className="text-[11px] text-slate-500">{h.city || 'Metropolis'}</p>
                       </div>
                     </div>
@@ -269,11 +305,11 @@ export const AdminHospitalsPage: React.FC = () => {
         isOpen={modalOpen}
         onClose={() => setModalOpen(false)}
         title={targetAction ? 'Verify Healthcare Facility' : 'Revoke Verification Status'}
-        description={`Confirm administrative decision for ${targetHospital?.name}`}
+        description={`Confirm administrative decision for ${targetHospital?.hospitalName || targetHospital?.name || 'facility'}`}
       >
         <form onSubmit={handleExecuteVerification} className="space-y-4 pt-2">
           <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-1">
-            <p className="font-bold text-slate-900">{targetHospital?.name}</p>
+            <p className="font-bold text-slate-900">{targetHospital?.hospitalName || targetHospital?.name}</p>
             <p className="text-slate-500">License: {targetHospital?.licenseNumber || 'N/A'}</p>
           </div>
 

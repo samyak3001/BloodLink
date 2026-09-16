@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import mongoose from 'mongoose';
 import { User, DonorProfile, HospitalProfile, EmergencyRequest, AuditLog } from '../models';
 
 /**
@@ -131,11 +132,16 @@ export async function getAdminUsers(
       const hp = hospitalMap.get(u._id.toString());
       const dp = donorMap.get(u._id.toString());
 
+      const uid = u._id.toString();
+      safe.id = uid;
+      safe._id = uid;
+
       if (hp) {
         safe.hospitalProfileId = hp._id.toString();
         safe.hospitalName = hp.hospitalName;
         safe.licenseNumber = hp.licenseNumber;
         safe.isVerified = hp.isVerifiedByAdmin;
+        safe.isVerifiedByAdmin = hp.isVerifiedByAdmin;
         safe.city = hp.address?.city;
       } else if (dp) {
         safe.donorProfileId = dp._id.toString();
@@ -210,6 +216,11 @@ export async function verifyHospital(
     const { id } = req.params;
     const { isVerified, adminNotes } = req.body as { isVerified: boolean; adminNotes?: string };
 
+    if (!id || !mongoose.isValidObjectId(id)) {
+      res.status(400).json({ status: 'fail', message: 'Invalid hospital ID format.' });
+      return;
+    }
+
     // Accept either HospitalProfile._id or associated User._id
     let hospital = await HospitalProfile.findById(id);
     if (!hospital) {
@@ -239,7 +250,16 @@ export async function verifyHospital(
     res.status(200).json({
       status: 'success',
       message: `Hospital '${hospital.hospitalName}' verification status updated to ${isVerified}.`,
-      hospital,
+      hospital: {
+        _id: hospital._id.toString(),
+        id: hospital._id.toString(),
+        hospitalProfileId: hospital._id.toString(),
+        userId: hospital.userId.toString(),
+        hospitalName: hospital.hospitalName,
+        isVerifiedByAdmin: hospital.isVerifiedByAdmin,
+        isVerified: hospital.isVerifiedByAdmin,
+        licenseNumber: hospital.licenseNumber,
+      },
     });
   } catch (error) {
     next(error);
