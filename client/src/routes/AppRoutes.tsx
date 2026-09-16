@@ -9,6 +9,7 @@ import { LandingPage } from '../pages/public/LandingPage';
 import { HowItWorksPage } from '../pages/public/HowItWorksPage';
 import { LoginPage } from '../pages/auth/LoginPage';
 import { HospitalLoginPage } from '../pages/auth/HospitalLoginPage';
+import { AdminLoginPage } from '../pages/auth/AdminLoginPage';
 import { RegisterPage } from '../pages/auth/RegisterPage';
 import { ForgotPasswordPage } from '../pages/auth/ForgotPasswordPage';
 import { ResetPasswordPage } from '../pages/auth/ResetPasswordPage';
@@ -115,6 +116,25 @@ export const AppRoutes: React.FC = () => {
       />
 
       <Route path="/hospital/login" element={<Navigate to="/hospital/sign-in" replace />} />
+
+      <Route
+        path="/admin/login"
+        element={
+          user ? (
+            user.role === 'ADMIN' ? (
+              <Navigate to="/admin/analytics" replace />
+            ) : user.role === 'HOSPITAL' ? (
+              <Navigate to="/hospital/dashboard" replace />
+            ) : (
+              <Navigate to="/donor/dashboard" replace />
+            )
+          ) : (
+            <PublicLayout>
+              <AdminLoginPage />
+            </PublicLayout>
+          )
+        }
+      />
 
       <Route
         path="/register"

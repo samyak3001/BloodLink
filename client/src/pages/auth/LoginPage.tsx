@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Mail, Lock, HeartPulse, LogIn, Sparkles, Building2, User, Shield } from 'lucide-react';
+import { Mail, Lock, HeartPulse, LogIn, Sparkles, Building2, User } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../components/feedback';
 import { Button } from '../../components/ui/Button';
@@ -135,7 +135,7 @@ export const LoginPage: React.FC = () => {
               <span className="text-[10px] text-slate-400">One-click fill</span>
             </div>
 
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               <Button
                 type="button"
                 variant="outline"
@@ -156,19 +156,9 @@ export const LoginPage: React.FC = () => {
               >
                 Hospital
               </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => fillDemoAccount('admin@bloodlink.org', 'Admin')}
-                className="text-[11px] py-1.5"
-                leftIcon={<Shield className="h-3 w-3 text-purple-600" />}
-              >
-                Admin
-              </Button>
             </div>
 
-            <div className="grid grid-cols-3 gap-2 pt-1">
+            <div className="grid grid-cols-2 gap-2 pt-1">
               <Button
                 type="button"
                 variant="ghost"
@@ -186,15 +176,6 @@ export const LoginPage: React.FC = () => {
                 className="text-[10px] py-1 text-slate-500 hover:text-slate-900"
               >
                 Hosp (Pending)
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => fillDemoAccount('admin.test@example.com', 'Platform Admin')}
-                className="text-[10px] py-1 text-slate-500 hover:text-slate-900"
-              >
-                Admin (Alt)
               </Button>
             </div>
           </div>

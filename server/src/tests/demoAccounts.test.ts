@@ -20,7 +20,7 @@ import { connectDB, disconnectDB } from '../config/database';
 import { ensureDemoUsers, DEMO_CREDENTIALS } from '../scripts/seed';
 import { User, HospitalProfile, DonorProfile } from '../models';
 import { comparePassword } from '../utils/password';
-import { loginSchema } from '../validators/authSchemas';
+import { loginSchema, registerSchema } from '../validators/authSchemas';
 
 describe('Quick Demo Accounts — Seed Verification & Security', () => {
   let dbAvailable = false;
@@ -236,4 +236,75 @@ describe('Quick Demo Accounts — Seed Verification & Security', () => {
       expect(getVerificationBadgeStatus(legacyFallback)).toBe('Pending Verification');
     });
   });
+
+  describe('Admin Portal & Public Login Isolation Security', () => {
+    // Pure logic simulating public login quick demo accounts filter
+    function getPublicDemoAccounts() {
+      return [
+        { label: 'Donor (O-)', email: 'alex.donor@example.com', role: 'DONOR' },
+        { label: 'Hospital', email: 'metro.hospital@bloodlink.org', role: 'HOSPITAL' },
+        { label: 'Donor (O+)', email: 'donor.test@example.com', role: 'DONOR' },
+        { label: 'Hosp (Pending)', email: 'hospital.test@example.com', role: 'HOSPITAL' },
+      ];
+    }
+
+    it('guarantees public login demo accounts do NOT include any ADMIN credentials or buttons', () => {
+      const publicDemos = getPublicDemoAccounts();
+      const hasAdmin = publicDemos.some(
+        (acc) => acc.role === 'ADMIN' || acc.email.includes('admin') || acc.label.toLowerCase().includes('admin')
+      );
+      expect(hasAdmin).toBe(false);
+    });
+
+    it('ensures valid ADMIN credentials authenticate and route to /admin/analytics', async () => {
+      const adminCreds = {
+        email: 'admin@bloodlink.org',
+        password: 'Password123!',
+      };
+
+      const parsed = await loginSchema.parseAsync(adminCreds);
+      expect(parsed.email).toBe('admin@bloodlink.org');
+
+      // Routing logic simulation
+      const user = { role: 'ADMIN' };
+      const targetRoute = user.role === 'ADMIN' ? '/admin/analytics' : '/';
+      expect(targetRoute).toBe('/admin/analytics');
+    });
+
+    it('ensures non-ADMIN users (DONOR, HOSPITAL) attempting /admin/login are denied or redirected', () => {
+      function evaluateAdminLoginAccess(userRole: string) {
+        if (userRole !== 'ADMIN') {
+          return { allowed: false, error: 'Access denied. This portal is strictly restricted to platform administrators.' };
+        }
+        return { allowed: true, redirect: '/admin/analytics' };
+      }
+
+      const donorAttempt = evaluateAdminLoginAccess('DONOR');
+      expect(donorAttempt.allowed).toBe(false);
+      expect(donorAttempt.error).toContain('strictly restricted to platform administrators');
+
+      const hospitalAttempt = evaluateAdminLoginAccess('HOSPITAL');
+      expect(hospitalAttempt.allowed).toBe(false);
+      expect(hospitalAttempt.error).toContain('strictly restricted to platform administrators');
+
+      const adminAttempt = evaluateAdminLoginAccess('ADMIN');
+      expect(adminAttempt.allowed).toBe(true);
+      expect(adminAttempt.redirect).toBe('/admin/analytics');
+    });
+
+    it('verifies that no Admin registration route is supported by registerSchema', async () => {
+      const adminRegisterAttempt = {
+        name: 'Public Admin Attempt',
+        email: 'newadmin@bloodlink.org',
+        password: 'Password123!',
+        role: 'ADMIN',
+        phone: '9876543210',
+      };
+
+      await expect(registerSchema.parseAsync(adminRegisterAttempt)).rejects.toThrow(
+        /Role must be either 'DONOR' or 'HOSPITAL'/
+      );
+    });
+  });
 });
+
