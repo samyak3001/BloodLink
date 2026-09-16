@@ -30,6 +30,7 @@ import { Card, CardContent } from '../../components/ui/Card';
 import { SkeletonCard } from '../../components/ui/Skeleton';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
+import { Modal } from '../../components/ui/Modal';
 import { MedicalDisclaimer } from '../../components/domain/MedicalDisclaimer';
 import { DonorCard } from '../../components/domain/DonorCard';
 import { RequestStatus } from '../../types';
@@ -48,6 +49,11 @@ export const RequestDetailsPage: React.FC = () => {
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pendingStatus, setPendingStatus] = useState<RequestStatus | null>(null);
+
+  // Fulfillment State
+  const [fulfillModalOpen, setFulfillModalOpen] = useState(false);
+  const [selectedFulfilledDonorId, setSelectedFulfilledDonorId] = useState<string>('');
+  const [isFulfilling, setIsFulfilling] = useState(false);
 
   // Phase 7: Contact Donor Modal State
   const [contactModalOpen, setContactModalOpen] = useState(false);
@@ -165,6 +171,19 @@ export const RequestDetailsPage: React.FC = () => {
   }, [socket, id]);
 
   const handlePromptStatus = (status: RequestStatus) => {
+    if (status === 'FULFILLED') {
+      const accepted = request?.acceptedDonors || [];
+      if (accepted.length === 0) {
+        toast.error(
+          'Cannot fulfill request: No accepted donors exist for this request. Fulfillment requires an accepted donor who completed the donation.',
+          'Fulfillment Error'
+        );
+        return;
+      }
+      setSelectedFulfilledDonorId(accepted[0]?.donorId || '');
+      setFulfillModalOpen(true);
+      return;
+    }
     setPendingStatus(status);
     setConfirmOpen(true);
   };
@@ -175,12 +194,32 @@ export const RequestDetailsPage: React.FC = () => {
       await updateRequestStatusApi(id, pendingStatus);
       toast.success(`Request transitioned to ${pendingStatus}`, 'Status Updated');
       setRequest((prev: any) => ({ ...prev, status: pendingStatus }));
-    } catch (err) {
-      toast.info(`Request marked as ${pendingStatus} (simulated update).`, 'Status Updated');
-      setRequest((prev: any) => ({ ...prev, status: pendingStatus }));
+    } catch (err: any) {
+      toast.error(err?.message || `Failed to update request status to ${pendingStatus}.`, 'Status Error');
     } finally {
       setConfirmOpen(false);
       setPendingStatus(null);
+    }
+  };
+
+  const executeFulfill = async () => {
+    if (!id || !selectedFulfilledDonorId) return;
+    try {
+      setIsFulfilling(true);
+      await updateRequestStatusApi(id, 'FULFILLED', undefined, selectedFulfilledDonorId);
+      const donor = request?.acceptedDonors?.find((d: any) => d.donorId === selectedFulfilledDonorId);
+      const donorName = donor?.name || donor?.donorName || 'donor';
+      toast.success(
+        `Emergency request fulfilled! 1 completed donation recorded for ${donorName}.`,
+        'Request Fulfilled'
+      );
+      setRequest((prev: any) => ({ ...prev, status: 'FULFILLED' }));
+      setFulfillModalOpen(false);
+      fetchData();
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to fulfill emergency request.', 'Fulfillment Error');
+    } finally {
+      setIsFulfilling(false);
     }
   };
 
@@ -538,20 +577,109 @@ export const RequestDetailsPage: React.FC = () => {
         )}
       </div>
 
-      {/* Confirmation Dialog */}
+      {/* Confirmation Dialog for Cancellation */}
       <ConfirmDialog
         isOpen={confirmOpen}
         onClose={() => setConfirmOpen(false)}
         onConfirm={executeStatus}
-        title={pendingStatus === 'FULFILLED' ? 'Confirm Fulfillment' : 'Confirm Cancellation'}
-        message={
-          pendingStatus === 'FULFILLED'
-            ? 'Are you certain all required blood units have been collected and verified on-site?'
-            : 'Are you sure you wish to cancel this request? Any donors traveling will be notified.'
-        }
-        confirmText={pendingStatus === 'FULFILLED' ? 'Yes, Fulfill' : 'Yes, Cancel'}
-        variant={pendingStatus === 'FULFILLED' ? 'info' : 'danger'}
+        title="Confirm Cancellation"
+        message="Are you sure you wish to cancel this emergency request? Any notified or responding donors will be updated."
+        confirmText="Yes, Cancel Request"
+        variant="danger"
       />
+
+      {/* Fulfillment Confirmation Modal */}
+      <Modal
+        isOpen={fulfillModalOpen}
+        onClose={() => !isFulfilling && setFulfillModalOpen(false)}
+        title="Confirm Blood Donation Fulfillment"
+        description="Select the donor who physically arrived and completed the donation. An official donation record will be created exclusively for this donor."
+        maxWidth="lg"
+      >
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
+              Verified Donating Donor
+            </label>
+            <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+              {request.acceptedDonors?.map((donor: any) => {
+                const isSelected = selectedFulfilledDonorId === donor.donorId;
+                return (
+                  <div
+                    key={donor.donorId}
+                    onClick={() => setSelectedFulfilledDonorId(donor.donorId)}
+                    className={`p-3.5 rounded-xl border cursor-pointer transition-all flex items-center justify-between ${
+                      isSelected
+                        ? 'border-vitality-500 bg-vitality-50/50 shadow-soft-xs'
+                        : 'border-slate-200 hover:border-slate-300 bg-white'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="radio"
+                        id={`donor-${donor.donorId}`}
+                        name="fulfilledDonor"
+                        value={donor.donorId}
+                        checked={isSelected}
+                        onChange={() => setSelectedFulfilledDonorId(donor.donorId)}
+                        className="h-4 w-4 text-vitality-600 focus:ring-vitality-500 border-slate-300"
+                      />
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-bold text-slate-900">
+                            {donor.name || donor.donorName || 'Accepted Donor'}
+                          </span>
+                          <Badge bloodGroup={donor.bloodGroup || request.bloodGroup} />
+                        </div>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          {donor.location || 'Location undisclosed'} • Accepted{' '}
+                          {donor.acceptedAt
+                            ? new Date(donor.acceptedAt).toLocaleTimeString([], {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })
+                            : 'Recently'}
+                        </p>
+                      </div>
+                    </div>
+                    {isSelected && (
+                      <CheckCircle2 className="h-5 w-5 text-vitality-600 shrink-0" />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-600 space-y-1">
+            <p className="font-semibold text-slate-700">Data Integrity Verification</p>
+            <p>
+              By proceeding, this emergency request will transition to <strong>FULFILLED</strong> and 1 unit donation credit will be permanently recorded for the selected donor only.
+            </p>
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={isFulfilling}
+              onClick={() => setFulfillModalOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="vitality"
+              size="sm"
+              isLoading={isFulfilling}
+              disabled={!selectedFulfilledDonorId || isFulfilling}
+              onClick={executeFulfill}
+              leftIcon={<CheckCircle2 className="h-3.5 w-3.5" />}
+            >
+              Confirm & Mark Fulfilled
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       {/* Phase 7: Contact Donor Modal */}
       {contactModalOpen && selectedDonor && (

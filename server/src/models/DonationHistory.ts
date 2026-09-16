@@ -85,6 +85,9 @@ const donationHistorySchema = new Schema<IDonationHistoryDocument>(
 // Compound index for querying donor's history chronologically
 donationHistorySchema.index({ donorId: 1, donationDate: -1 });
 
+// Unique compound index: One completed donation record per donor per emergency request (idempotency guard)
+donationHistorySchema.index({ requestId: 1, donorId: 1 }, { unique: true });
+
 export const DonationHistory: Model<IDonationHistoryDocument> = model<IDonationHistoryDocument>(
   'DonationHistory',
   donationHistorySchema

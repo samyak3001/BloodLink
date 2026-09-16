@@ -39,10 +39,15 @@ export async function createEmergencyRequestApi(data: CreateRequestData) {
   return json;
 }
 
-export async function updateRequestStatusApi(id: string, status: RequestStatus, reason?: string) {
+export async function updateRequestStatusApi(
+  id: string,
+  status: RequestStatus,
+  reason?: string,
+  fulfilledDonorId?: string
+) {
   const res = await authenticatedFetch(`${API_BASE_URL}/api/requests/${id}/status`, {
     method: 'PATCH',
-    body: JSON.stringify({ status, reason }),
+    body: JSON.stringify({ status, reason, fulfilledDonorId }),
   });
   const json = await res.json();
   if (!res.ok) throw new Error(json.message || 'Failed to update request status');

@@ -39,51 +39,20 @@ export const DonorDashboardPage: React.FC = () => {
         setIsAvailable(data.dashboard.isAvailable);
       }
     } catch (err) {
-      // Fallback data for smooth development mode if backend donor profile not yet seeded
+      // Truthful empty fallback: no fake donations or fabricated emergency requests
       setDashboardData({
-        donor: {
-          bloodGroup: (user as any)?.bloodGroup || 'O+',
+        dashboard: {
+          bloodGroup: (profile as any)?.bloodGroup || (user as any)?.bloodGroup || 'O+',
           isAvailable: true,
-          totalDonations: 4,
-          screening: {
-            isAgeEligible: true,
-            isWeightEligible: true,
-            hasNoRecentIllness: true,
-            hasValidInterval: true,
+          stats: {
+            totalCompletedDonations: 0,
+            unitsDonated: 0,
+            compatibleActiveRequestsCount: 0,
+            unreadNotificationsCount: 0,
           },
+          nearbyRequests: [],
+          nearbyCompatibleRequests: [],
         },
-        nearbyRequests: [
-          {
-            id: 'req-demo-1',
-            patientIdentifier: 'EMERGENCY-SURGERY-91',
-            bloodGroup: (user as any)?.bloodGroup || 'O+',
-            bloodComponent: 'WHOLE_BLOOD',
-            unitsRequired: 2,
-            urgency: 'CRITICAL',
-            status: 'ACTIVE',
-            hospitalName: 'Apollo Emergency Trauma Center',
-            city: 'Central District',
-            distanceFormatted: '2.1 km away',
-            estimatedTransitTimeMinutes: 7,
-            requiredWithinHours: 3,
-            notes: 'Immediate whole blood required for incoming surgical trauma patient.',
-          },
-          {
-            id: 'req-demo-2',
-            patientIdentifier: 'ICU-ONCOLOGY-44',
-            bloodGroup: (user as any)?.bloodGroup || 'O+',
-            bloodComponent: 'PLATELETS',
-            unitsRequired: 1,
-            urgency: 'HIGH',
-            status: 'ACTIVE',
-            hospitalName: 'Metro General Hospital',
-            city: 'Metro Medical Hub',
-            distanceFormatted: '4.5 km away',
-            estimatedTransitTimeMinutes: 14,
-            requiredWithinHours: 6,
-            notes: 'Urgent platelet transfusion for ICU inpatient.',
-          },
-        ],
       });
     } finally {
       setIsLoading(false);
@@ -118,7 +87,17 @@ export const DonorDashboardPage: React.FC = () => {
   };
 
   const donorBloodGroup: BloodGroup =
-    dashboardData?.dashboard?.bloodGroup || dashboardData?.donor?.bloodGroup || dashboardData?.bloodGroup || dashboardData?.profile?.bloodGroup || (profile as any)?.bloodGroup || (user as any)?.bloodGroup || 'O+';
+    dashboardData?.dashboard?.bloodGroup || dashboardData?.profile?.bloodGroup || (profile as any)?.bloodGroup || (user as any)?.bloodGroup || 'O+';
+
+  const completedDonationsCount: number =
+    dashboardData?.dashboard?.stats?.totalCompletedDonations ?? 0;
+
+  const unitsDonatedCount: number =
+    dashboardData?.dashboard?.stats?.unitsDonated ?? completedDonationsCount;
+
+  const activeBroadcastsCount: number =
+    dashboardData?.dashboard?.stats?.compatibleActiveRequestsCount ??
+    (dashboardData?.dashboard?.nearbyCompatibleRequests?.length ?? dashboardData?.dashboard?.nearbyRequests?.length ?? 0);
 
   const handleRespond = async (requestId: string, action: 'ACCEPTED' | 'DECLINED') => {
     const allRequests = [
@@ -208,9 +187,11 @@ export const DonorDashboardPage: React.FC = () => {
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Completed Donations</p>
               <div className="flex items-center gap-2">
                 <span className="text-2xl font-black text-slate-900">
-                  {dashboardData?.donor?.totalDonations || 4}
+                  {completedDonationsCount}
                 </span>
-                <span className="text-[11px] text-vitality-600 font-semibold">~12 lives helped</span>
+                <span className="text-[11px] text-vitality-600 font-semibold">
+                  {completedDonationsCount > 0 ? `${unitsDonatedCount} unit${unitsDonatedCount === 1 ? '' : 's'} donated` : 'No donations yet'}
+                </span>
               </div>
             </div>
             <div className="p-3 rounded-2xl bg-vitality-50 text-vitality-600">
@@ -240,7 +221,7 @@ export const DonorDashboardPage: React.FC = () => {
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Active Broadcasts</p>
               <div className="flex items-center gap-2">
                 <span className="text-2xl font-black text-emergency-600">
-                  {dashboardData?.nearbyRequests?.length || 2}
+                  {activeBroadcastsCount}
                 </span>
                 <span className="text-[11px] text-slate-500 font-medium">Nearby alerts</span>
               </div>

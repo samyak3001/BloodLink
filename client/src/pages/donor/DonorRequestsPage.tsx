@@ -42,54 +42,8 @@ export const DonorRequestsPage: React.FC = () => {
       const data = await getEmergencyRequestsApi(params);
       setRequests(data.requests || []);
     } catch (err) {
-      // Fallback demo requests if server has no seeded active requests
-      setRequests([
-        {
-          id: 'req-101',
-          patientIdentifier: 'EMERGENCY-TRAUMA-12',
-          bloodGroup: 'O-',
-          bloodComponent: 'WHOLE_BLOOD',
-          unitsRequired: 3,
-          urgency: 'CRITICAL',
-          status: 'ACTIVE',
-          hospitalName: 'Apollo Emergency Trauma Center',
-          city: 'Central District',
-          distanceFormatted: '1.8 km away',
-          estimatedTransitTimeMinutes: 6,
-          requiredWithinHours: 2,
-          notes: 'Massive blood loss emergency surgery in Operation Theater 3.',
-        },
-        {
-          id: 'req-102',
-          patientIdentifier: 'ICU-CARDIAC-99',
-          bloodGroup: 'A+',
-          bloodComponent: 'RED_CELLS',
-          unitsRequired: 2,
-          urgency: 'HIGH',
-          status: 'ACTIVE',
-          hospitalName: 'St. Jude Heart Institute',
-          city: 'Metro West Hub',
-          distanceFormatted: '3.4 km away',
-          estimatedTransitTimeMinutes: 12,
-          requiredWithinHours: 5,
-          notes: 'Urgent red cell units required for bypass postoperative recovery.',
-        },
-        {
-          id: 'req-103',
-          patientIdentifier: 'MATERNITY-CARE-04',
-          bloodGroup: 'B+',
-          bloodComponent: 'PLATELETS',
-          unitsRequired: 2,
-          urgency: 'HIGH',
-          status: 'ACTIVE',
-          hospitalName: 'City Women & Child Hospital',
-          city: 'Downtown Riverfront',
-          distanceFormatted: '5.1 km away',
-          estimatedTransitTimeMinutes: 18,
-          requiredWithinHours: 6,
-          notes: 'High-risk postpartum care emergency platelet support.',
-        },
-      ]);
+      // Truthful empty state: do NOT fabricate fake emergency requests if none exist or error occurs
+      setRequests([]);
     } finally {
       setIsLoading(false);
     }

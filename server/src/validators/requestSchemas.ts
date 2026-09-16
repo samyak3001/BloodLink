@@ -50,12 +50,23 @@ export const createEmergencyRequestSchema = z.object({
 });
 
 // Update Request Status Schema
-export const updateRequestStatusSchema = z.object({
-  status: z.enum(['ACTIVE', 'MATCHED', 'FULFILLED', 'CANCELLED'], {
-    errorMap: () => ({ message: 'Invalid target status' }),
-  }),
-  reason: z.string().trim().max(200).optional(),
-});
+export const updateRequestStatusSchema = z
+  .object({
+    status: z.enum(['ACTIVE', 'MATCHED', 'FULFILLED', 'CANCELLED'], {
+      errorMap: () => ({ message: 'Invalid target status' }),
+    }),
+    fulfilledDonorId: z.string().trim().optional(),
+    reason: z.string().trim().max(200).optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.status === 'FULFILLED' && (!data.fulfilledDonorId || data.fulfilledDonorId.trim() === '')) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['fulfilledDonorId'],
+        message: 'A specific fulfilled donor ID must be selected to record physical donation completion.',
+      });
+    }
+  });
 
 // Donor Response to Request Schema
 export const donorResponseSchema = z.object({

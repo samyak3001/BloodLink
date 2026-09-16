@@ -471,9 +471,10 @@ export async function updateEmergencyRequestStatus(
 ): Promise<void> {
   try {
     const { id } = req.params;
-    const { status: targetStatus, reason } = req.body as {
+    const { status: targetStatus, reason, fulfilledDonorId } = req.body as {
       status: RequestStatus;
       reason?: string;
+      fulfilledDonorId?: string;
     };
 
     const request = await EmergencyRequest.findById(id);
@@ -515,21 +516,56 @@ export async function updateEmergencyRequestStatus(
       return;
     }
 
+    // When status is FULFILLED, an explicit fulfilledDonorId must be verified
+    let donatingMatch: any = null;
+    if (targetStatus === 'FULFILLED') {
+      if (!fulfilledDonorId || !fulfilledDonorId.trim()) {
+        res.status(400).json({
+          status: 'fail',
+          message: 'A specific fulfilled donor ID must be selected to record physical donation completion.',
+        });
+        return;
+      }
+
+      const match = request.potentialMatches.find(
+        (m) => m.donorId.toString() === fulfilledDonorId.trim()
+      );
+
+      if (!match) {
+        res.status(400).json({
+          status: 'fail',
+          message: 'The selected fulfilled donor is not associated with this emergency request.',
+        });
+        return;
+      }
+
+      if (match.status !== 'ACCEPTED') {
+        res.status(400).json({
+          status: 'fail',
+          message: `The selected donor has status '${match.status}'. Only donors who responded with ACCEPTED can be fulfilled.`,
+        });
+        return;
+      }
+
+      donatingMatch = match;
+    }
+
     const previousStatus = request.status;
     request.status = targetStatus;
     await request.save();
 
-    // When a request is FULFILLED, create DonationHistory records for all accepted donors.
-    // This is the authoritative step that updates each donor's donation ledger.
-    if (targetStatus === 'FULFILLED') {
+    // When a request is FULFILLED, create exactly ONE DonationHistory record for the actual donating donor.
+    if (targetStatus === 'FULFILLED' && donatingMatch) {
       try {
-        const acceptedMatches = request.potentialMatches.filter(
-          (m) => m.status === 'ACCEPTED'
-        );
+        // Idempotency guard: verify if a record already exists for (requestId, donorId)
+        const existingRecord = await DonationHistory.findOne({
+          requestId: request._id,
+          donorId: donatingMatch.donorId,
+        });
 
-        if (acceptedMatches.length > 0) {
-          const donationRecords = acceptedMatches.map((match) => ({
-            donorId: match.donorId,
+        if (!existingRecord) {
+          const donationRecord = {
+            donorId: donatingMatch.donorId,
             hospitalId: request.hospitalId,
             requestId: request._id,
             bloodGroup: request.bloodGroup,
@@ -537,36 +573,34 @@ export async function updateEmergencyRequestStatus(
             unitsDonated: 1,
             status: 'COMPLETED' as const,
             donationDate: new Date(),
-            certificateId: `CERT-${Date.now()}-${match.donorId.toString().slice(-6).toUpperCase()}`,
-          }));
+            certificateId: `CERT-${Date.now()}-${donatingMatch.donorId.toString().slice(-6).toUpperCase()}`,
+          };
 
-          await DonationHistory.create(donationRecords);
+          await DonationHistory.create(donationRecord);
+        }
 
-          // Notify each accepted donor that their donation is confirmed
-          for (const match of acceptedMatches) {
-            const donorDoc = await DonorProfile.findById(match.donorId).select('userId');
-            if (donorDoc) {
-              const donorUserId = donorDoc.userId?.toString();
-              if (donorUserId) {
-                await Notification.create({
-                  recipientId: donorUserId,
-                  type: 'DONOR_ACCEPTED',
-                  title: '🩸 Donation Completed — Thank You!',
-                  message: `Your blood donation for Emergency Request has been officially recorded and verified. Your contribution has been added to your Donation History.`,
-                  data: {
-                    requestId: request._id.toString(),
-                    bloodGroup: request.bloodGroup,
-                    bloodComponent: request.bloodComponent,
-                  },
-                });
-                void pushUnreadCount(donorUserId);
-              }
-            }
+        // Notify the actual fulfilled donor that their donation is confirmed
+        const donorDoc = await DonorProfile.findById(donatingMatch.donorId).select('userId');
+        if (donorDoc) {
+          const donorUserId = donorDoc.userId?.toString();
+          if (donorUserId) {
+            await Notification.create({
+              recipientId: donorUserId,
+              type: 'DONOR_ACCEPTED',
+              title: '🩸 Donation Completed — Thank You!',
+              message: `Your blood donation for Emergency Request has been officially recorded and verified. Your contribution has been added to your Donation History.`,
+              data: {
+                requestId: request._id.toString(),
+                bloodGroup: request.bloodGroup,
+                bloodComponent: request.bloodComponent,
+              },
+            });
+            void pushUnreadCount(donorUserId);
           }
         }
       } catch (historyError) {
         // Non-fatal: log but do not block the status update response
-        console.error('[DonationHistory] Failed to create donation records on FULFILLED:', historyError);
+        console.error('[DonationHistory] Failed to create donation record on FULFILLED:', historyError);
       }
     }
 

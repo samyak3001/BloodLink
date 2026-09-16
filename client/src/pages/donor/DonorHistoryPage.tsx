@@ -25,45 +25,8 @@ export const DonorHistoryPage: React.FC = () => {
         }));
         setHistory(normalized);
       } catch (err) {
-        // Fallback demo donation history
-        setHistory([
-          {
-            id: 'don-01',
-            date: '2026-07-15',
-            hospitalName: 'Apollo Emergency Trauma Center',
-            bloodComponent: 'WHOLE_BLOOD',
-            units: 1,
-            status: 'COMPLETED',
-            impactNote: 'Successfully transfused for emergency trauma surgery',
-          },
-          {
-            id: 'don-02',
-            date: '2026-04-10',
-            hospitalName: 'Metro General Hospital',
-            bloodComponent: 'RED_CELLS',
-            units: 1,
-            status: 'COMPLETED',
-            impactNote: 'Transfused for acute anemia pediatric patient',
-          },
-          {
-            id: 'don-03',
-            date: '2026-01-08',
-            hospitalName: 'St. Jude Heart Institute',
-            bloodComponent: 'WHOLE_BLOOD',
-            units: 1,
-            status: 'COMPLETED',
-            impactNote: 'Used during open-heart surgery procedure',
-          },
-          {
-            id: 'don-04',
-            date: '2025-10-22',
-            hospitalName: 'Central Blood Bank & Trauma Care',
-            bloodComponent: 'PLATELETS',
-            units: 1,
-            status: 'COMPLETED',
-            impactNote: 'Platelet therapy for oncology inpatient',
-          },
-        ]);
+        // Truthful empty state: do NOT fabricate donation records on error
+        setHistory([]);
       } finally {
         setIsLoading(false);
       }
@@ -73,7 +36,6 @@ export const DonorHistoryPage: React.FC = () => {
   }, []);
 
   const totalUnits = history.reduce((acc, curr) => acc + (curr.units || 1), 0);
-  const estimatedLives = totalUnits * 3;
 
   return (
     <div className="space-y-6">
@@ -105,7 +67,9 @@ export const DonorHistoryPage: React.FC = () => {
           <CardContent className="p-5 flex items-center justify-between">
             <div className="space-y-1">
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Units Donated</p>
-              <p className="text-2xl font-black text-clinical-600">{totalUnits} Units</p>
+              <p className="text-2xl font-black text-clinical-600">
+                {totalUnits > 0 ? `${totalUnits} Unit${totalUnits === 1 ? '' : 's'}` : '0 Units'}
+              </p>
             </div>
             <div className="p-3 rounded-2xl bg-clinical-100/80 text-clinical-600">
               <Award className="h-6 w-6" />
@@ -117,7 +81,7 @@ export const DonorHistoryPage: React.FC = () => {
           <CardContent className="p-5 flex items-center justify-between">
             <div className="space-y-1">
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Estimated Lives Impacted</p>
-              <p className="text-2xl font-black text-vitality-600">~{estimatedLives} Patients</p>
+              <p className="text-2xl font-black text-vitality-600">Not available</p>
             </div>
             <div className="p-3 rounded-2xl bg-vitality-100/80 text-vitality-600">
               <CheckCircle2 className="h-6 w-6" />
@@ -171,7 +135,7 @@ export const DonorHistoryPage: React.FC = () => {
                     </span>
                   </TableCell>
                   <TableCell className="text-xs text-slate-500 italic max-w-xs">
-                    {record.impactNote || 'Transfusion completed under medical supervision.'}
+                    {record.verificationNotes || record.impactNote || '—'}
                   </TableCell>
                 </TableRow>
               ))}

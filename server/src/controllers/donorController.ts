@@ -91,11 +91,14 @@ export async function getDonorDashboard(
       })
       .sort((a, b) => a.distanceKm - b.distanceKm);
 
-    // 2. Count donations
-    const donationCount = await DonationHistory.countDocuments({
+    // 2. Query completed donations to calculate totalCompletedDonations and unitsDonated from actual MongoDB records
+    const completedDonations = await DonationHistory.find({
       donorId: donor._id,
       status: 'COMPLETED',
-    });
+    }).select('unitsDonated');
+
+    const donationCount = completedDonations.length;
+    const unitsDonated = completedDonations.reduce((sum, d) => sum + (d.unitsDonated || 1), 0);
 
     // 3. Unread notification count
     const unreadNotifications = await Notification.countDocuments({
@@ -116,6 +119,7 @@ export async function getDonorDashboard(
         stats: {
           compatibleActiveRequestsCount: compatibleRequests.length,
           totalCompletedDonations: donationCount,
+          unitsDonated,
           unreadNotificationsCount: unreadNotifications,
         },
         nearbyCompatibleRequests: nearbyList,
