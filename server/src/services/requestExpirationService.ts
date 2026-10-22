@@ -44,8 +44,12 @@ export async function autoExpireOverdueRequests(): Promise<number> {
         try {
           emitRequestUpdated(req._id.toString(), {
             requestId: req._id.toString(),
-            status: 'EXPIRED',
-            updatedAt: new Date(),
+            previousStatus: 'ACTIVE',
+            newStatus: 'EXPIRED',
+            bloodGroup: req.bloodGroup,
+            urgency: req.urgency,
+            updatedBy: 'system',
+            timestamp: now.toISOString(),
           });
         } catch {
           // Socket service errors are non-fatal

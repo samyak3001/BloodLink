@@ -453,7 +453,7 @@ export async function getRegisteredDonors(
     }
 
     if (isAvailable !== undefined && isAvailable !== 'ALL') {
-      query.isAvailable = isAvailable === 'true' || isAvailable === true;
+      query.isAvailable = String(isAvailable).toLowerCase() === 'true';
     }
 
     if (district) {
