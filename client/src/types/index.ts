@@ -10,6 +10,8 @@ export type RequestUrgency = 'CRITICAL' | 'HIGH' | 'MEDIUM';
 
 export type RequestStatus = 'ACTIVE' | 'MATCHED' | 'FULFILLED' | 'CANCELLED' | 'EXPIRED';
 
+export type CoordinationStatus = 'PENDING' | 'HOSPITAL_REVIEWED' | 'CONTACTED';
+
 export interface HealthStatus {
   status: string;
   service: string;
@@ -91,3 +93,69 @@ export interface Notification {
   createdAt: string;
   updatedAt: string;
 }
+
+export interface HospitalFacilityProfile {
+  id: string;
+  hospitalName: string;
+  email: string;
+  phone: string;
+  emergencyHelpline: string;
+  licenseNumber: string;
+  isVerifiedByAdmin: boolean;
+  address: {
+    street: string;
+    city: string;
+    state?: string;
+    district?: string;
+    postalCode?: string;
+  };
+  location?: {
+    type: string;
+    coordinates: [number, number];
+  };
+  coordinates?: [number, number] | number[];
+  latitude?: number | null;
+  longitude?: number | null;
+  hasValidLocation?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface DonorLocationProfile {
+  id: string;
+  userId: string;
+  name?: string;
+  email?: string;
+  phone?: string;
+  bloodGroup: BloodGroup;
+  isAvailable: boolean;
+  supportedComponents?: BloodComponent[];
+  address: {
+    street: string;
+    city: string;
+    district: string;
+    state: string;
+    postalCode: string;
+  };
+  location?: {
+    type: string;
+    coordinates: [number, number];
+  };
+  coordinates: [number, number] | [];
+  latitude: number | null;
+  longitude: number | null;
+  hasValidLocation: boolean;
+}
+
+export interface UpdateDonorLocationPayload {
+  street?: string;
+  city: string;
+  district: string;
+  state?: string;
+  postalCode: string;
+  latitude: number;
+  longitude: number;
+  coordinates?: [number, number];
+}
+
+

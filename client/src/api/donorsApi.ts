@@ -50,3 +50,33 @@ export async function getDonorHistoryApi() {
   if (!res.ok) throw new Error(json.message || 'Failed to fetch donation history');
   return json;
 }
+
+export async function getDonorProfileApi() {
+  const res = await authenticatedFetch(`${API_BASE_URL}/api/donors/profile`);
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.message || 'Failed to fetch donor profile');
+  return json;
+}
+
+export async function updateDonorLocationApi(payload: {
+  street?: string;
+  city: string;
+  district: string;
+  state?: string;
+  postalCode: string;
+  latitude: number;
+  longitude: number;
+  coordinates?: [number, number];
+}) {
+  const res = await authenticatedFetch(`${API_BASE_URL}/api/donors/location`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+  const json = await res.json();
+  if (!res.ok) {
+    const errorMsg = json.errors?.[0]?.message || json.message || 'Failed to update donation location';
+    throw new Error(errorMsg);
+  }
+  return json;
+}
+

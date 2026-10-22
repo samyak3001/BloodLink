@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Unit Tests — Database Connectivity Guard & Error Handling
  *
  * Verifies:
@@ -7,12 +7,22 @@
  * - bufferCommands: false prevents long 10000ms buffering timeouts
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import type { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
 import { requireDatabase } from '../middleware/dbCheck';
 
 describe('Database Connectivity Guard Middleware (requireDatabase)', () => {
+  let readyStateSpy: any;
+
+  beforeAll(() => {
+    readyStateSpy = vi.spyOn(mongoose.connection, 'readyState', 'get');
+  });
+
+  afterAll(() => {
+    readyStateSpy?.mockRestore();
+  });
+
   function makeMockRes() {
     const ctx = {
       statusCode: null as number | null,
@@ -32,8 +42,7 @@ describe('Database Connectivity Guard Middleware (requireDatabase)', () => {
   }
 
   it('immediately returns 503 Service Unavailable when mongoose is disconnected (readyState 0)', () => {
-    // Force disconnected state
-    vi.spyOn(mongoose.connection, 'readyState', 'get').mockReturnValue(0);
+    readyStateSpy.mockReturnValue(0);
 
     const req = {} as Request;
     const { res, ctx } = makeMockRes();
@@ -52,7 +61,7 @@ describe('Database Connectivity Guard Middleware (requireDatabase)', () => {
   it('immediately returns 503 when mongoose is connecting (readyState 2) or disconnecting (readyState 3)', () => {
     const { res: res2, ctx: ctx2 } = makeMockRes();
     const next2 = vi.fn() as NextFunction;
-    vi.spyOn(mongoose.connection, 'readyState', 'get').mockReturnValue(2);
+    readyStateSpy.mockReturnValue(2);
 
     requireDatabase({} as Request, res2 as unknown as Response, next2);
     expect(ctx2.statusCode).toBe(503);
@@ -60,7 +69,7 @@ describe('Database Connectivity Guard Middleware (requireDatabase)', () => {
 
     const { res: res3, ctx: ctx3 } = makeMockRes();
     const next3 = vi.fn() as NextFunction;
-    vi.spyOn(mongoose.connection, 'readyState', 'get').mockReturnValue(3);
+    readyStateSpy.mockReturnValue(3);
 
     requireDatabase({} as Request, res3 as unknown as Response, next3);
     expect(ctx3.statusCode).toBe(503);
@@ -68,7 +77,7 @@ describe('Database Connectivity Guard Middleware (requireDatabase)', () => {
   });
 
   it('invokes next() when mongoose is fully connected (readyState 1)', () => {
-    vi.spyOn(mongoose.connection, 'readyState', 'get').mockReturnValue(1);
+    readyStateSpy.mockReturnValue(1);
 
     const req = {} as Request;
     const { res, ctx } = makeMockRes();

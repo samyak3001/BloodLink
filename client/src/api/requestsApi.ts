@@ -70,3 +70,13 @@ export async function contactAcceptedDonorApi(requestId: string, donorId: string
   if (!res.ok) throw new Error(json.message || 'Failed to contact donor');
   return json;
 }
+
+export async function reviewAcceptedDonorApi(requestId: string, donorId: string) {
+  const res = await authenticatedFetch(`${API_BASE_URL}/api/requests/${requestId}/review-donor`, {
+    method: 'POST',
+    body: JSON.stringify({ donorId }),
+  });
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.message || 'Failed to review donor');
+  return json;
+}

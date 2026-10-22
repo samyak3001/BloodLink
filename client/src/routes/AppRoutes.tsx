@@ -30,6 +30,7 @@ import { ActiveRequestsPage } from '../pages/hospital/ActiveRequestsPage';
 import { RequestDetailsPage } from '../pages/hospital/RequestDetailsPage';
 import { HospitalNotificationsPage } from '../pages/hospital/HospitalNotificationsPage';
 import { HospitalProfilePage } from '../pages/hospital/HospitalProfilePage';
+import { HospitalDonorsPage } from '../pages/hospital/HospitalDonorsPage';
 
 // Admin Pages
 import { AdminDashboardPage } from '../pages/admin/AdminDashboardPage';
@@ -115,19 +116,22 @@ export const AppRoutes: React.FC = () => {
         }
       />
 
-      <Route path="/hospital/login" element={<Navigate to="/hospital/sign-in" replace />} />
+      <Route
+        path="/admin"
+        element={
+          user?.role === 'ADMIN' ? (
+            <Navigate to="/admin/analytics" replace />
+          ) : (
+            <Navigate to="/admin/login" replace />
+          )
+        }
+      />
 
       <Route
         path="/admin/login"
         element={
-          user ? (
-            user.role === 'ADMIN' ? (
-              <Navigate to="/admin/analytics" replace />
-            ) : user.role === 'HOSPITAL' ? (
-              <Navigate to="/hospital/dashboard" replace />
-            ) : (
-              <Navigate to="/donor/dashboard" replace />
-            )
+          user?.role === 'ADMIN' ? (
+            <Navigate to="/admin/analytics" replace />
           ) : (
             <PublicLayout>
               <AdminLoginPage />
@@ -307,6 +311,17 @@ export const AppRoutes: React.FC = () => {
           <ProtectedRoute allowedRoles={['HOSPITAL']}>
             <DashboardLayout>
               <HospitalNotificationsPage />
+            </DashboardLayout>
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/hospital/donors"
+        element={
+          <ProtectedRoute allowedRoles={['HOSPITAL']}>
+            <DashboardLayout>
+              <HospitalDonorsPage />
             </DashboardLayout>
           </ProtectedRoute>
         }

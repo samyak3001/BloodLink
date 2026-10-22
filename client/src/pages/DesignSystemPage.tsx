@@ -245,7 +245,7 @@ export const DesignSystemPage: React.FC = () => {
                     Live Status Indicators
                   </h4>
                   <div className="flex flex-wrap gap-4">
-                    <StatusIndicator status="online" label="WebSocket Online" />
+                    <StatusIndicator status="online" label="Live updates enabled" />
                     <StatusIndicator status="available" label="Available to Donate" />
                     <StatusIndicator status="busy" label="Engaged in Donation" />
                     <StatusIndicator status="critical" label="Emergency Broadcast Active" />

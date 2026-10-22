@@ -28,67 +28,18 @@ export const AdminHospitalsPage: React.FC = () => {
   const [adminNotes, setAdminNotes] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
+  const [error, setError] = useState<string | null>(null);
+
   const fetchHospitals = async () => {
     try {
       setIsLoading(true);
+      setError(null);
       const data = await getAdminUsersApi({ role: 'HOSPITAL' });
       setHospitals(data.users || []);
-    } catch (err) {
-      // Fallback demo hospitals with consistent unique identity keys
-      setHospitals([
-        {
-          _id: 'h-1',
-          id: 'h-1',
-          hospitalProfileId: 'hp-1',
-          hospitalName: 'Apollo Emergency Trauma Center',
-          name: 'Apollo Emergency Trauma Center',
-          email: 'apollo@bloodlink.org',
-          licenseNumber: 'HOSP-LIC-1002',
-          city: 'Central Metropolis',
-          isVerified: true,
-          isVerifiedByAdmin: true,
-          createdAt: '2026-03-10',
-        },
-        {
-          _id: 'h-2',
-          id: 'h-2',
-          hospitalProfileId: 'hp-2',
-          hospitalName: 'St. Jude Heart & Trauma Institute',
-          name: 'St. Jude Heart & Trauma Institute',
-          email: 'stjude@bloodlink.org',
-          licenseNumber: 'HOSP-LIC-8819',
-          city: 'Metro West Corridor',
-          isVerified: true,
-          isVerifiedByAdmin: true,
-          createdAt: '2026-04-14',
-        },
-        {
-          _id: 'h-3',
-          id: 'h-3',
-          hospitalProfileId: 'hp-3',
-          hospitalName: 'City Care Emergency Hospital',
-          name: 'City Care Emergency Hospital',
-          email: 'citycare@example.com',
-          licenseNumber: 'HOSP-LIC-4491',
-          city: 'East Health Hub',
-          isVerified: false,
-          isVerifiedByAdmin: false,
-          createdAt: '2026-08-30',
-        },
-        {
-          _id: 'h-4',
-          id: 'h-4',
-          hospitalProfileId: 'hp-4',
-          hospitalName: 'Green Valley Community Clinic',
-          name: 'Green Valley Community Clinic',
-          email: 'greenvalley@example.com',
-          licenseNumber: 'CLINIC-LIC-002',
-          city: 'Valley Region',
-          isVerified: false,
-          isVerifiedByAdmin: false,
-          createdAt: '2026-09-01',
-        },
-      ]);
+    } catch (err: any) {
+      setHospitals([]);
+      setError(err?.response?.data?.message || err?.message || 'Failed to load hospital facilities');
+      toast.error('Unable to retrieve hospital facilities from server.', 'Data Load Error');
     } finally {
       setIsLoading(false);
     }
@@ -194,11 +145,20 @@ export const AdminHospitalsPage: React.FC = () => {
         </Button>
       </div>
 
+      {error && (
+        <div className="p-4 rounded-xl bg-emergency-50 border border-emergency-200 flex items-center justify-between">
+          <p className="text-xs font-semibold text-emergency-700">{error}</p>
+          <Button size="sm" variant="outline" onClick={fetchHospitals}>
+            Retry
+          </Button>
+        </div>
+      )}
+
       {/* Filter */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-soft-sm">
         <Input
           label="Search by Facility Name, License Number, or City"
-          placeholder="e.g. Apollo, HOSP-LIC-1002, Metropolis"
+          placeholder="e.g. Apollo, HOSP-LIC-1002, Chennai"
           leftIcon={<Search className="h-4 w-4" />}
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
@@ -222,7 +182,7 @@ export const AdminHospitalsPage: React.FC = () => {
           <TableBody>
             {filteredHospitals.map((h: any) => {
               const hId = getHospitalId(h);
-              const isVerified = h.isVerified === true || h.isVerifiedByAdmin === true;
+              const isVerified = h.isVerifiedByAdmin === true;
               const facilityName = h.hospitalName || h.name || 'Healthcare Facility';
 
               return (
@@ -234,7 +194,7 @@ export const AdminHospitalsPage: React.FC = () => {
                       </div>
                       <div>
                         <p className="font-bold text-slate-900 text-xs">{facilityName}</p>
-                        <p className="text-[11px] text-slate-500">{h.city || 'Metropolis'}</p>
+                        <p className="text-[11px] text-slate-500">{h.city || 'Location not specified'}</p>
                       </div>
                     </div>
                   </TableCell>
@@ -242,7 +202,7 @@ export const AdminHospitalsPage: React.FC = () => {
                     {h.email}
                   </TableCell>
                   <TableCell className="font-mono text-xs text-slate-800 font-semibold">
-                    {h.licenseNumber || 'HOSP-PENDING'}
+                    {h.licenseNumber || 'N/A'}
                   </TableCell>
                   <TableCell>
                     <span

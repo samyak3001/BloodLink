@@ -1,9 +1,14 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import { Notification } from '../types';
 import { EmergencyAlertPayload, NotificationCountPayload } from '../types/socket';
 import { getNotificationsApi, markNotificationReadApi, markAllNotificationsReadApi } from '../api/notificationsApi';
 import { useSocketEvent } from '../hooks/useSocketEvent';
 import { useAuth } from './AuthContext';
+import { useSocketContext } from './SocketContext';
+
+// How often (ms) to poll for notifications when Socket.IO is unavailable.
+// Polling only starts when the socket is disconnected and a user is logged in.
+const POLL_INTERVAL_MS = 12_000;
 
 interface NotificationContextType {
   notifications: Notification[];
@@ -20,10 +25,12 @@ const NotificationContext = createContext<NotificationContextType | undefined>(u
 
 export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { user } = useAuth();
+  const { isConnected } = useSocketContext();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState<number>(0);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [latestEmergencyAlert, setLatestEmergencyAlert] = useState<EmergencyAlertPayload | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchNotifications = useCallback(async () => {
     if (!user) return;
@@ -39,7 +46,7 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
     }
   }, [user]);
 
-  // Initial fetch
+  // Initial fetch when user logs in
   useEffect(() => {
     if (user) {
       fetchNotifications();
@@ -48,6 +55,36 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
       setUnreadCount(0);
     }
   }, [user, fetchNotifications]);
+
+  // -----------------------------------------------------------------------
+  // Polling fallback — active only when user is logged in AND socket is down
+  // -----------------------------------------------------------------------
+  useEffect(() => {
+    const clearPoll = () => {
+      if (pollTimerRef.current !== null) {
+        clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+    };
+
+    if (user && !isConnected) {
+      // Start polling if not already running
+      if (pollTimerRef.current === null) {
+        console.debug('[NotificationContext] Socket offline — starting poll fallback');
+        pollTimerRef.current = setInterval(() => {
+          fetchNotifications();
+        }, POLL_INTERVAL_MS);
+      }
+    } else {
+      // Socket reconnected (or user logged out) — stop polling
+      if (pollTimerRef.current !== null) {
+        console.debug('[NotificationContext] Socket online — stopping poll fallback');
+        clearPoll();
+      }
+    }
+
+    return clearPoll;
+  }, [user, isConnected, fetchNotifications]);
 
   const markAsRead = async (id: string) => {
     try {
@@ -76,7 +113,9 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
     setLatestEmergencyAlert(null);
   }, []);
 
-  // Socket listeners
+  // -----------------------------------------------------------------------
+  // Socket listeners — primary real-time update path
+  // -----------------------------------------------------------------------
   useSocketEvent('notification:unread-count', useCallback((data: NotificationCountPayload) => {
     setUnreadCount(data.unreadCount);
   }, []));

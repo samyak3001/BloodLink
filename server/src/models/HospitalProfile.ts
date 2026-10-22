@@ -3,6 +3,36 @@ import { IHospitalProfile } from '../types';
 
 export interface IHospitalProfileDocument extends Omit<IHospitalProfile, '_id'>, Document {}
 
+const pointSchema = new Schema(
+  {
+    type: {
+      type: String,
+      enum: ['Point'],
+      default: 'Point',
+      required: true,
+    },
+    coordinates: {
+      type: [Number], // [longitude, latitude]
+      required: true,
+      validate: {
+        validator: (val: number[]) =>
+          Array.isArray(val) &&
+          val.length === 2 &&
+          typeof val[0] === 'number' &&
+          typeof val[1] === 'number' &&
+          !isNaN(val[0]) &&
+          !isNaN(val[1]) &&
+          val[0] >= -180 &&
+          val[0] <= 180 &&
+          val[1] >= -90 &&
+          val[1] <= 90,
+        message: 'Coordinates must be valid [longitude (-180 to 180), latitude (-90 to 90)]',
+      },
+    },
+  },
+  { _id: false }
+);
+
 const hospitalProfileSchema = new Schema<IHospitalProfileDocument>(
   {
     userId: {
@@ -38,30 +68,14 @@ const hospitalProfileSchema = new Schema<IHospitalProfileDocument>(
       index: true,
     },
     location: {
-      type: {
-        type: String,
-        enum: ['Point'],
-        default: 'Point',
-        required: true,
-      },
-      coordinates: {
-        type: [Number], // [longitude, latitude]
-        required: true,
-        validate: {
-          validator: (val: number[]) =>
-            Array.isArray(val) &&
-            val.length === 2 &&
-            val[0] >= -180 &&
-            val[0] <= 180 &&
-            val[1] >= -90 &&
-            val[1] <= 90,
-          message: 'Coordinates must be valid [longitude (-180 to 180), latitude (-90 to 90)]',
-        },
-      },
+      type: pointSchema,
+      required: false,
+      default: undefined,
     },
     address: {
       street: { type: String, required: [true, 'Street address is required'], trim: true },
       city: { type: String, required: [true, 'City is required'], trim: true },
+      district: { type: String, trim: true, default: '' },
       state: { type: String, required: [true, 'State is required'], trim: true },
       postalCode: { type: String, required: [true, 'Postal code is required'], trim: true },
     },
@@ -85,8 +99,8 @@ const hospitalProfileSchema = new Schema<IHospitalProfileDocument>(
   }
 );
 
-// Geospatial 2dsphere index for locating hospitals
-hospitalProfileSchema.index({ location: '2dsphere' });
+// Geospatial 2dsphere index for locating hospitals (sparse to support facilities without coordinates)
+hospitalProfileSchema.index({ location: '2dsphere' }, { sparse: true });
 
 export const HospitalProfile: Model<IHospitalProfileDocument> = model<IHospitalProfileDocument>(
   'HospitalProfile',

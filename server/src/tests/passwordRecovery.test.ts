@@ -14,7 +14,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { connectDB, disconnectDB } from '../config/database';
-import { User } from '../models';
+import { User, HospitalProfile } from '../models';
 import { forgotPassword, resetPassword } from '../controllers/authController';
 import { comparePassword, hashPassword } from '../utils/password';
 import { Request, Response } from 'express';
@@ -26,8 +26,32 @@ describe('Password Recovery & Reset Flow', () => {
     try {
       await connectDB();
       dbAvailable = true;
-    } catch {
-      console.warn('[Test] MongoDB is not running locally — password recovery DB tests skipped.');
+      let user = await User.findOne({ email: testEmail });
+      if (!user) {
+        user = await User.create({
+          name: 'Jitesh Hospital',
+          email: testEmail,
+          passwordHash: await hashPassword('JiteshHospital123'),
+          role: 'HOSPITAL',
+          phone: '+919876543210',
+          isVerified: false,
+        });
+      }
+      let profile = await HospitalProfile.findOne({ userId: user._id });
+      if (!profile) {
+        await HospitalProfile.create({
+          userId: user._id,
+          hospitalName: 'Jitesh Hospital',
+          licenseNumber: 'HOSP-LIC-JITESH-01',
+          emergencyHelpline: '+919876543210',
+          isVerifiedByAdmin: false,
+          location: { type: 'Point', coordinates: [77.5946, 12.9716] },
+          address: { street: 'Main Hospital Road', city: 'Bengaluru', state: 'Karnataka', postalCode: '560001' },
+        });
+      }
+    } catch (err) {
+      console.warn('[Test] Error during DB setup:', err);
+      dbAvailable = false;
     }
   });
 

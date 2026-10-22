@@ -20,38 +20,53 @@ import {
 export const AdminDashboardPage: React.FC = () => {
   const [analytics, setAnalytics] = useState<any>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchAnalytics = async () => {
+    try {
+      setIsLoading(true);
+      setError(null);
+      const data = await getAdminAnalyticsApi();
+      setAnalytics(data);
+    } catch (err: unknown) {
+      setAnalytics(null);
+      setError(err instanceof Error ? err.message : 'Failed to retrieve administrative analytics.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchAnalytics = async () => {
-      try {
-        setIsLoading(true);
-        const data = await getAdminAnalyticsApi();
-        setAnalytics(data);
-      } catch (err) {
-        // Fallback demo metrics
-        setAnalytics({
-          totalUsers: 142,
-          totalDonors: 118,
-          activeDonors: 84,
-          totalHospitals: 24,
-          verifiedHospitals: 21,
-          pendingHospitals: 3,
-          totalRequests: 89,
-          activeRequests: 5,
-          fulfilledRequests: 74,
-          fulfillmentRate: '83.1%',
-          averageResponseTimeMinutes: 8.4,
-        });
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
     fetchAnalytics();
   }, []);
 
+  const stats = analytics?.analytics || analytics;
+  const totalDonors = stats?.totalDonors ?? stats?.users?.totalDonors ?? 0;
+  const activeDonors = stats?.activeDonors ?? stats?.users?.availableDonors ?? 0;
+  const totalHospitals = stats?.totalHospitals ?? stats?.users?.totalHospitals ?? 0;
+  const pendingHospitals = stats?.pendingHospitals ?? stats?.users?.pendingHospitals ?? 0;
+  const totalRequests = stats?.totalRequests ?? stats?.requests?.totalRequests ?? 0;
+  const activeRequests = stats?.activeRequests ?? stats?.requests?.activeRequests ?? 0;
+  const fulfilledRequests = stats?.fulfilledRequests ?? stats?.requests?.fulfilledRequests ?? 0;
+  const cancelledRequests = stats?.cancelledRequests ?? stats?.requests?.cancelledRequests ?? 0;
+  const fulfillmentRate = stats?.fulfillmentRate ?? '0%';
+  const trends = stats?.trends || [];
+  const donorActivity = stats?.donorActivity || [];
+
   return (
     <div className="space-y-8">
+      {/* Error Alert if API Fails */}
+      {error && (
+        <div className="p-4 bg-red-50 border border-red-200 rounded-2xl flex items-center justify-between">
+          <div>
+            <p className="text-sm font-bold text-red-800">Analytics Service Unavailable</p>
+            <p className="text-xs text-red-600">{error}</p>
+          </div>
+          <Button size="sm" variant="outline" onClick={fetchAnalytics}>
+            Retry
+          </Button>
+        </div>
+      )}
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-soft">
         {isLoading && (
@@ -74,7 +89,7 @@ export const AdminDashboardPage: React.FC = () => {
         <div className="flex items-center gap-2">
           <Link to="/admin/hospitals">
             <Button size="sm" variant="clinical" leftIcon={<Building2 className="h-4 w-4" />}>
-              Verify Hospitals ({analytics?.pendingHospitals || 3})
+              Verify Hospitals ({pendingHospitals})
             </Button>
           </Link>
           <Link to="/admin/users">
@@ -92,9 +107,9 @@ export const AdminDashboardPage: React.FC = () => {
             <div className="space-y-1">
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Registered Donors</p>
               <div className="flex items-center gap-2">
-                <span className="text-2xl font-black text-slate-900">{analytics?.totalDonors ?? 118}</span>
+                <span className="text-2xl font-black text-slate-900">{totalDonors}</span>
                 <span className="text-[11px] text-vitality-600 font-bold">
-                  {analytics?.activeDonors ?? 84} Active
+                  {activeDonors} Active
                 </span>
               </div>
             </div>
@@ -109,9 +124,9 @@ export const AdminDashboardPage: React.FC = () => {
             <div className="space-y-1">
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Hospital Facilities</p>
               <div className="flex items-center gap-2">
-                <span className="text-2xl font-black text-slate-900">{analytics?.totalHospitals ?? 24}</span>
+                <span className="text-2xl font-black text-slate-900">{totalHospitals}</span>
                 <span className="text-[11px] text-amber-600 font-bold">
-                  {analytics?.pendingHospitals ?? 3} Pending
+                  {pendingHospitals} Pending
                 </span>
               </div>
             </div>
@@ -127,10 +142,10 @@ export const AdminDashboardPage: React.FC = () => {
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Emergency Requests</p>
               <div className="flex items-center gap-2">
                 <span className="text-2xl font-black text-emergency-600">
-                  {analytics?.totalRequests ?? 89}
+                  {totalRequests}
                 </span>
                 <span className="text-[11px] text-slate-500 font-medium">
-                  {analytics?.activeRequests ?? 5} Live
+                  {activeRequests} Live
                 </span>
               </div>
             </div>
@@ -146,10 +161,10 @@ export const AdminDashboardPage: React.FC = () => {
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Fulfillment Rate</p>
               <div className="flex items-center gap-2">
                 <span className="text-2xl font-black text-vitality-700">
-                  {analytics?.fulfillmentRate || '83.1%'}
+                  {fulfillmentRate}
                 </span>
                 <span className="text-[11px] text-slate-500 font-medium">
-                  ~{analytics?.averageResponseTimeMinutes || 8.4}m response
+                  {fulfilledRequests} completed
                 </span>
               </div>
             </div>
@@ -162,16 +177,17 @@ export const AdminDashboardPage: React.FC = () => {
 
       {/* Interactive Platform Analytics & Visualization Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <EmergencyTrendsChart />
+        <EmergencyTrendsChart data={trends} />
         <FulfillmentRateChart
-          fulfilledCount={analytics?.fulfilledRequests ?? 74}
-          activeCount={analytics?.activeRequests ?? 5}
-          avgResponseMinutes={analytics?.averageResponseTimeMinutes ?? 8.4}
+          fulfilledCount={fulfilledRequests}
+          activeCount={activeRequests}
+          cancelledCount={cancelledRequests}
+          avgResponseMinutes={0}
         />
       </div>
 
       <div className="w-full">
-        <DonorActivityChart />
+        <DonorActivityChart data={donorActivity} />
       </div>
 
       {/* Quick Navigation Cards */}
@@ -218,7 +234,7 @@ export const AdminDashboardPage: React.FC = () => {
             </p>
             <Link to="/admin/hospitals">
               <Button size="sm" variant="outline" fullWidth rightIcon={<ArrowRight className="h-3.5 w-3.5" />}>
-                Review Pending ({analytics?.pendingHospitals || 3})
+                Review Pending ({pendingHospitals})
               </Button>
             </Link>
           </CardContent>

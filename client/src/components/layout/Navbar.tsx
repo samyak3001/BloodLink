@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { HeartPulse, Menu, X, LogOut } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import { ConnectionStatus } from '../shared/ConnectionStatus';
 import { NotificationBell } from '../notifications/NotificationBell';
 import { Button } from '../ui/Button';
 
@@ -74,7 +73,6 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* Right: Controls & User Menu */}
         <div className="flex items-center space-x-2.5">
-          <ConnectionStatus />
           <NotificationBell />
 
           {user ? (

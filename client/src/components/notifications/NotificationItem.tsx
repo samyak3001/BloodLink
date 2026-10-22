@@ -37,7 +37,7 @@ export const NotificationItem: React.FC<NotificationItemProps> = ({ notification
           <p className={cn('text-sm font-semibold truncate', !notification.isRead ? 'text-slate-900' : 'text-slate-700')}>
             {notification.title}
           </p>
-          <p className="text-xs text-slate-600 mt-1 line-clamp-2">
+          <p className="text-xs text-slate-600 mt-1 whitespace-pre-line">
             {notification.message}
           </p>
           <div className="flex items-center justify-between mt-2">

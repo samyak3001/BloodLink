@@ -19,6 +19,7 @@ export const ActiveRequestsPage: React.FC = () => {
 
   const [requests, setRequests] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
   const [isVerified, setIsVerified] = useState<boolean | null>(null);
   const [selectedStatus, setSelectedStatus] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -42,59 +43,16 @@ export const ActiveRequestsPage: React.FC = () => {
   const fetchRequests = async () => {
     try {
       setIsLoading(true);
+      setError(null);
       const params: Record<string, string> = {};
       if (selectedStatus !== 'ALL') params.status = selectedStatus;
 
       const data = await getHospitalRequestsApi(params);
       setRequests(data.requests || []);
-    } catch (err) {
-      // Fallback demo requests
-      setRequests([
-        {
-          id: 'req-2026-001',
-          patientIdentifier: 'EMERGENCY-TRAUMA-91',
-          bloodGroup: 'O-',
-          bloodComponent: 'WHOLE_BLOOD',
-          unitsRequired: 3,
-          urgency: 'CRITICAL',
-          status: 'ACTIVE',
-          requiredWithinHours: 3,
-          createdAt: '25 mins ago',
-        },
-        {
-          id: 'req-2026-002',
-          patientIdentifier: 'ICU-SURGICAL-02',
-          bloodGroup: 'A+',
-          bloodComponent: 'PLATELETS',
-          unitsRequired: 2,
-          urgency: 'HIGH',
-          status: 'MATCHED',
-          requiredWithinHours: 6,
-          createdAt: '2 hours ago',
-        },
-        {
-          id: 'req-2026-003',
-          patientIdentifier: 'MATERNITY-08',
-          bloodGroup: 'B+',
-          bloodComponent: 'WHOLE_BLOOD',
-          unitsRequired: 1,
-          urgency: 'MEDIUM',
-          status: 'FULFILLED',
-          requiredWithinHours: 24,
-          createdAt: 'Yesterday',
-        },
-        {
-          id: 'req-2026-004',
-          patientIdentifier: 'ORTHO-TRAUMA-19',
-          bloodGroup: 'AB-',
-          bloodComponent: 'WHOLE_BLOOD',
-          unitsRequired: 2,
-          urgency: 'HIGH',
-          status: 'CANCELLED',
-          requiredWithinHours: 4,
-          createdAt: '3 days ago',
-        },
-      ]);
+    } catch (err: any) {
+      setRequests([]);
+      setError(err?.response?.data?.message || err?.message || 'Failed to load emergency requests');
+      toast.error('Unable to fetch emergency requests from server.', 'Data Load Error');
     } finally {
       setIsLoading(false);
     }
@@ -121,14 +79,10 @@ export const ActiveRequestsPage: React.FC = () => {
             : r
         )
       );
-    } catch (err) {
-      toast.info(`Request marked as ${pendingUpdate.status} (simulated update).`, 'Status Updated');
-      setRequests((prev) =>
-        prev.map((r) =>
-          r.id === pendingUpdate.id || r._id === pendingUpdate.id
-            ? { ...r, status: pendingUpdate.status }
-            : r
-        )
+    } catch (err: any) {
+      toast.error(
+        err?.response?.data?.message || err?.message || `Failed to update request to ${pendingUpdate.status}.`,
+        'Action Failed'
       );
     } finally {
       setConfirmOpen(false);
@@ -188,6 +142,15 @@ export const ActiveRequestsPage: React.FC = () => {
           )}
         </div>
       </div>
+
+      {error && (
+        <div className="p-4 rounded-xl bg-emergency-50 border border-emergency-200 flex items-center justify-between">
+          <p className="text-xs font-semibold text-emergency-700">{error}</p>
+          <Button size="sm" variant="outline" onClick={fetchRequests}>
+            Retry
+          </Button>
+        </div>
+      )}
 
       {/* Filter Toolbar */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-soft-sm grid grid-cols-1 sm:grid-cols-2 gap-3">

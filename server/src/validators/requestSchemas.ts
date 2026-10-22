@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { BloodGroup, BloodComponent, RequestUrgency, RequestStatus } from '../types';
 
+import { DONOR_MATCH_RADIUS_KM } from '../config/constants';
+
 const bloodGroups: [BloodGroup, ...BloodGroup[]] = [
   'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'
 ];
@@ -45,7 +47,7 @@ export const createEmergencyRequestSchema = z.object({
     .array(z.number())
     .length(2, 'Coordinates must be [longitude, latitude]')
     .optional(),
-  maxRadiusKm: z.number().min(1).max(100).optional().default(30),
+  maxRadiusKm: z.number().min(1).max(100).optional().default(DONOR_MATCH_RADIUS_KM),
   notes: z.string().trim().max(500, 'Notes cannot exceed 500 characters').optional(),
 });
 
@@ -103,3 +105,61 @@ export const updateUserStatusSchema = z.object({
   }),
   reason: z.string().trim().max(200).optional(),
 });
+
+// Update Donor Location & Coordinates Schema
+export const updateDonorLocationSchema = z
+  .object({
+    street: z.string().trim().optional(),
+    city: z.string().trim().min(2, 'City is required and must be at least 2 characters'),
+    district: z.string().trim().min(2, 'District is required and must be at least 2 characters'),
+    state: z.string().trim().optional(),
+    postalCode: z.string().trim().min(3, 'Postal code is required and must be at least 3 characters'),
+    latitude: z
+      .number({ invalid_type_error: 'Latitude must be a valid number' })
+      .min(-90, 'Latitude must be between -90 and 90')
+      .max(90, 'Latitude must be between -90 and 90')
+      .optional(),
+    longitude: z
+      .number({ invalid_type_error: 'Longitude must be a valid number' })
+      .min(-180, 'Longitude must be between -180 and 180')
+      .max(180, 'Longitude must be between -180 and 180')
+      .optional(),
+    coordinates: z
+      .array(z.number())
+      .length(2, 'Coordinates must be [longitude, latitude]')
+      .optional(),
+  })
+  .superRefine((data, ctx) => {
+    const hasLat = data.latitude !== undefined;
+    const hasLng = data.longitude !== undefined;
+    const hasCoords = Array.isArray(data.coordinates) && data.coordinates.length === 2;
+
+    if (!hasCoords && (!hasLat || !hasLng)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['latitude'],
+        message: 'Both latitude and longitude must be provided together',
+      });
+    }
+
+    if (hasCoords) {
+      const [lng, lat] = data.coordinates!;
+      if (lng < -180 || lng > 180) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['coordinates'],
+          message: 'Longitude in coordinates must be between -180 and 180',
+        });
+      }
+      if (lat < -90 || lat > 90) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['coordinates'],
+          message: 'Latitude in coordinates must be between -90 and 90',
+        });
+      }
+    }
+  });
+
+export type UpdateDonorLocationInput = z.infer<typeof updateDonorLocationSchema>;
+

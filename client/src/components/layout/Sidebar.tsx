@@ -50,6 +50,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, className }) 
         { label: 'Hospital Dashboard', path: '/hospital/dashboard', icon: <LayoutDashboard className="h-4 w-4" /> },
         { label: 'New Emergency Request', path: '/hospital/requests/new', icon: <FilePlus2 className="h-4 w-4" /> },
         { label: 'Active Requests', path: '/hospital/requests', icon: <Activity className="h-4 w-4" /> },
+        { label: 'Registered Donors', path: '/hospital/donors', icon: <Users className="h-4 w-4" /> },
         { label: 'Hospital Notifications', path: '/hospital/notifications', icon: <Bell className="h-4 w-4" /> },
         { label: 'Hospital Profile', path: '/hospital/profile', icon: <Building2 className="h-4 w-4" /> },
         { label: 'Settings & Privacy', path: '/settings', icon: <Settings className="h-4 w-4" /> },

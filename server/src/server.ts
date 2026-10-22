@@ -16,6 +16,7 @@ import { connectDB } from './config/database';
 import { initSocketIO } from './services/socketService';
 import { ensureDemoUsers } from './scripts/seed';
 import { sanitizeIncompatibleMatches } from './services/matchingService';
+import { autoExpireOverdueRequests } from './services/requestExpirationService';
 
 // Ensure .env is loaded from either server directory or workspace root
 dotenv.config();
@@ -171,6 +172,14 @@ if (process.env.NODE_ENV !== 'test') {
       if (process.env.NODE_ENV !== 'production') {
         await sanitizeIncompatibleMatches();
       }
+
+      // Automatically expire any requests that passed their deadline while the server was offline
+      await autoExpireOverdueRequests();
+
+      // Recurring background worker: check and expire overdue requests every 60 seconds
+      setInterval(() => {
+        void autoExpireOverdueRequests();
+      }, 60000);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn('-----------------------------------------------------------');

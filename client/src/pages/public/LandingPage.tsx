@@ -14,7 +14,6 @@ import {
 import { Button } from '../../components/ui/Button';
 import { Card, CardContent } from '../../components/ui/Card';
 import { MedicalDisclaimer } from '../../components/domain/MedicalDisclaimer';
-import { ConnectionStatus } from '../../components/shared/ConnectionStatus';
 import { HealthStatus } from '../../types';
 import { API_BASE_URL } from '../../config/api';
 
@@ -72,7 +71,6 @@ export const LandingPage: React.FC = () => {
 
         {/* Real-time Status Pills */}
         <div className="flex items-center justify-center gap-3 pt-4 text-xs">
-          <ConnectionStatus />
           <div className="flex items-center space-x-1.5 px-3 py-1.5 rounded-full border border-slate-200 bg-slate-50 text-slate-600">
             <Server className="h-3.5 w-3.5 text-slate-500" />
             <span>API Status:</span>

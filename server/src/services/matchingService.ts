@@ -8,6 +8,24 @@ import {
 } from '../config/bloodCompatibility';
 import { calculateDistanceKm, formatDistance, estimateTransitTimeMinutes } from '../utils/geo';
 import { isDbConnected } from '../config/database';
+import { DONOR_MATCH_RADIUS_KM } from '../config/constants';
+
+/**
+ * Normalise a district string for case-insensitive, whitespace-tolerant comparison.
+ * Returns empty string when the value is absent.
+ */
+export function normalizeDistrict(value: string | undefined | null): string {
+  return (value || '').trim().toLowerCase();
+}
+
+/**
+ * Returns true when both districts are non-empty and match case-insensitively.
+ */
+export function isSameDistrict(a: string | undefined | null, b: string | undefined | null): boolean {
+  const na = normalizeDistrict(a);
+  const nb = normalizeDistrict(b);
+  return na.length > 0 && nb.length > 0 && na === nb;
+}
 
 export interface MatchOptions {
   targetBloodGroup: BloodGroup;
@@ -16,6 +34,8 @@ export interface MatchOptions {
   location: [number, number]; // [longitude, latitude]
   maxRadiusKm?: number;
   limit?: number;
+  /** Optional: hospital district for same-district fallback matching */
+  hospitalDistrict?: string;
 }
 
 export interface PotentialMatchResult {
@@ -35,6 +55,8 @@ export interface PotentialMatchResult {
   matchScore: number;
   matchReasons: string[];
   isExactBloodMatch: boolean;
+  /** True when matched via same-district rule (GPS may be unavailable or > radius) */
+  matchedByDistrict?: boolean;
 }
 
 /**
@@ -54,7 +76,7 @@ export function calculateMatchScore(
   options: MatchOptions
 ): { score: number; reasons: string[]; isExact: boolean } {
   const component = options.bloodComponent || 'WHOLE_BLOOD';
-  const maxRadius = options.maxRadiusKm || 30;
+  const maxRadius = options.maxRadiusKm || DONOR_MATCH_RADIUS_KM;
   const urgency = options.urgency || 'HIGH';
   const reasons: string[] = [];
 
@@ -138,7 +160,7 @@ export function calculateMatchScore(
 }
 
 /**
- * Pure ranking function: Takes donor profiles and ranks them by match score
+ * Pure ranking function: Takes donor profiles and ranks them by match score.
  * Guaranteed to NEVER expose raw GPS coordinates in the returned structure.
  */
 export function rankPotentialMatches(
@@ -160,7 +182,7 @@ export function rankPotentialMatches(
     const distanceKm = calculateDistanceKm(options.location, donor.location.coordinates);
 
     // Filter by max radius
-    const maxRadius = options.maxRadiusKm || 30;
+    const maxRadius = options.maxRadiusKm || DONOR_MATCH_RADIUS_KM;
     if (distanceKm > maxRadius) continue;
 
     // Calculate score
@@ -215,13 +237,17 @@ export function rankPotentialMatches(
 }
 
 /**
- * Service to query potential matches from database and return ranked results
+ * Service to query potential matches from database and return ranked results.
+ *
+ * When `options.hospitalDistrict` is provided, an additional pass queries donors
+ * in the same district who are blood-compatible and available, regardless of GPS
+ * distance.  GPS-matched donors are always included as well (union, de-duplicated).
  */
 export async function findPotentialMatches(
   options: MatchOptions
 ): Promise<PotentialMatchResult[]> {
   const component = options.bloodComponent || 'WHOLE_BLOOD';
-  const maxRadiusKm = options.maxRadiusKm || 30;
+  const maxRadiusKm = options.maxRadiusKm || DONOR_MATCH_RADIUS_KM;
   const compatibleGroups = getCompatibleDonorBloodGroups(options.targetBloodGroup, component);
 
   // If database is not connected (e.g. during unit tests without DB), return empty array
@@ -229,11 +255,12 @@ export async function findPotentialMatches(
     return [];
   }
 
-  // 1. Query available donors with compatible blood groups within geospatial radius
-  // maxDistance in meters = maxRadiusKm * 1000
+  // ----------------------------------------------------------------
+  // Pass 1: GPS-based candidates within radius
+  // ----------------------------------------------------------------
   const maxDistanceMeters = maxRadiusKm * 1000;
 
-  const candidateDonors = await DonorProfile.find({
+  const gpsCandidates = await DonorProfile.find({
     isAvailable: true,
     bloodGroup: { $in: compatibleGroups },
     supportedComponents: component,
@@ -250,16 +277,130 @@ export async function findPotentialMatches(
     .populate('userId', 'name role email status')
     .limit(options.limit ? options.limit * 2 : 50);
 
+  // ----------------------------------------------------------------
+  // Pass 2: District-based candidates (when hospitalDistrict is set)
+  // ----------------------------------------------------------------
+  let districtCandidates: IDonorProfileDocument[] = [];
+  const hospDistrict = normalizeDistrict(options.hospitalDistrict);
+  if (hospDistrict) {
+    // Query all available, compatible donors â€” filter by district in-memory
+    // (MongoDB does not have a normalized-string index; districts are user-supplied text)
+    const allDistrictDonors = await DonorProfile.find({
+      isAvailable: true,
+      bloodGroup: { $in: compatibleGroups },
+      supportedComponents: component,
+    })
+      .populate('userId', 'name role email status')
+      .limit(200);
+
+    districtCandidates = allDistrictDonors.filter((d) =>
+      isSameDistrict(d.address?.district, options.hospitalDistrict)
+    );
+  }
+
+  // ----------------------------------------------------------------
+  // Merge: union by donorId, GPS-candidates take precedence
+  // ----------------------------------------------------------------
+  const seen = new Set<string>();
+  const merged: IDonorProfileDocument[] = [];
+
+  for (const d of gpsCandidates) {
+    seen.add(d._id.toString());
+    merged.push(d);
+  }
+  for (const d of districtCandidates) {
+    if (!seen.has(d._id.toString())) {
+      seen.add(d._id.toString());
+      merged.push(d);
+    }
+  }
+
   // Filter out any donors whose user account is SUSPENDED
-  const activeDonors = candidateDonors.filter((donor) => {
+  const activeDonors = merged.filter((donor) => {
     if (donor.userId && typeof donor.userId === 'object' && 'status' in donor.userId) {
       return (donor.userId as { status: string }).status !== 'SUSPENDED';
     }
     return true;
   });
 
-  // 2. Score and rank potential matches
-  return rankPotentialMatches(activeDonors, options);
+  // ----------------------------------------------------------------
+  // Score & rank GPS candidates normally, district-only candidates
+  // with a base proximity score equivalent to DONOR_MATCH_RADIUS_KM
+  // ----------------------------------------------------------------
+  const gpsSet = new Set(gpsCandidates.map((d) => d._id.toString()));
+  const results: PotentialMatchResult[] = [];
+
+  for (const donor of activeDonors) {
+    if (!donor.isAvailable) continue;
+    if (!compatibleGroups.includes(donor.bloodGroup)) continue;
+    if (!donor.supportedComponents.includes(component)) continue;
+
+    const isGps = gpsSet.has(donor._id.toString());
+    const donorHasCoords =
+      Array.isArray(donor.location?.coordinates) && donor.location.coordinates.length === 2;
+
+    let distanceKm: number;
+    let matchedByDistrict = false;
+
+    if (isGps && donorHasCoords) {
+      distanceKm = calculateDistanceKm(options.location, donor.location.coordinates);
+    } else if (hospDistrict && isSameDistrict(donor.address?.district, options.hospitalDistrict)) {
+      // District match but GPS not available or out of radius â€” assign a nominal distance
+      distanceKm = donorHasCoords
+        ? calculateDistanceKm(options.location, donor.location.coordinates)
+        : 0;
+      matchedByDistrict = true;
+    } else {
+      continue; // should not happen
+    }
+
+    // For district-only matches, use a synthetic GPS distance that passes the scoring
+    // function's radius check. Score reflects blood group quality only (proximity = 0 km nominal).
+    const scoringDistance = matchedByDistrict ? 0 : distanceKm;
+    const { score, reasons, isExact } = calculateMatchScore(donor, scoringDistance, options);
+    if (score === 0 && !matchedByDistrict) continue;
+
+    let userId = '';
+    let donorName: string | undefined;
+    if (donor.userId) {
+      const u = donor.userId as unknown as Record<string, unknown>;
+      if (u._id) {
+        userId = String(u._id);
+        if (typeof u.name === 'string') donorName = u.name;
+      } else {
+        userId = String(donor.userId);
+      }
+    }
+
+    results.push({
+      donorId: donor._id.toString(),
+      userId,
+      donorName,
+      bloodGroup: donor.bloodGroup,
+      supportedComponents: donor.supportedComponents,
+      address: {
+        city: donor.address.city,
+        district: donor.address.district,
+        postalCode: donor.address.postalCode,
+      },
+      distanceKm,
+      distanceFormatted: distanceKm > 0 ? formatDistance(distanceKm) : 'Same district',
+      estimatedTransitTimeMinutes: distanceKm > 0 ? estimateTransitTimeMinutes(distanceKm) : 30,
+      matchScore: score || 25, // district-only gets minimum blood compatibility score
+      matchReasons: matchedByDistrict ? [...reasons, 'Same district as hospital'] : reasons,
+      isExactBloodMatch: isExact,
+      matchedByDistrict,
+    });
+  }
+
+  // Sort descending by matchScore, then ascending by distanceKm
+  results.sort((a, b) => {
+    if (b.matchScore !== a.matchScore) return b.matchScore - a.matchScore;
+    return a.distanceKm - b.distanceKm;
+  });
+
+  const limit = options.limit || 20;
+  return results.slice(0, limit);
 }
 
 /**
@@ -332,4 +473,5 @@ export async function sanitizeIncompatibleMatches(): Promise<{
 
   return { invalidMatchesReverted, invalidNotificationsRemoved };
 }
+
 

@@ -6,13 +6,16 @@ import {
   updateEmergencyRequestStatus,
   getPotentialMatchesForRequest,
   contactAcceptedDonor,
+  reviewAcceptedDonor,
 } from '../controllers/emergencyRequestController';
 import { authenticate, authorize, optionalAuthenticate } from '../middleware/auth';
 import { validateBody } from '../middleware/validate';
 import {
   createEmergencyRequestSchema,
   updateRequestStatusSchema,
+  donorResponseSchema,
 } from '../validators/requestSchemas';
+import { respondToEmergencyRequest } from '../controllers/donorController';
 
 const router = Router();
 
@@ -30,6 +33,15 @@ router.post(
 
 // Get Request by ID (Includes caller-specific response status and authorized accepted donors)
 router.get('/:id', optionalAuthenticate, getEmergencyRequestById);
+
+// Respond to Emergency Request (Donor Only)
+router.post(
+  '/:id/respond',
+  authenticate,
+  authorize('DONOR'),
+  validateBody(donorResponseSchema),
+  respondToEmergencyRequest
+);
 
 // Update Request Status (Hospital Owner or Admin)
 router.patch(
@@ -53,6 +65,14 @@ router.post(
   authenticate,
   authorize('HOSPITAL', 'ADMIN'),
   contactAcceptedDonor
+);
+
+// Review Accepted Donor Profile (Hospital Owner or Admin Only)
+router.post(
+  '/:id/review-donor',
+  authenticate,
+  authorize('HOSPITAL', 'ADMIN'),
+  reviewAcceptedDonor
 );
 
 export default router;

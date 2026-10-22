@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import {
   HeartPulse,
@@ -11,6 +11,8 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../components/feedback';
 import { getDonorDashboardApi, toggleDonorAvailabilityApi, respondToRequestApi } from '../../api/donorsApi';
+import { useSocket } from '../../hooks/useSocket';
+import { useSocketEvent } from '../../hooks/useSocketEvent';
 import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
 import { Card, CardContent } from '../../components/ui/Card';
@@ -24,44 +26,68 @@ import { BloodGroup } from '../../types';
 export const DonorDashboardPage: React.FC = () => {
   const { user, profile } = useAuth();
   const { toast } = useToast();
+  const { isConnected } = useSocket();
 
   const [isAvailable, setIsAvailable] = useState<boolean>(true);
   const [isToggling, setIsToggling] = useState<boolean>(false);
   const [dashboardData, setDashboardData] = useState<any>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const fetchDashboard = async () => {
+  const fetchDashboard = useCallback(async (isBackground = false) => {
     try {
-      setIsLoading(true);
+      if (!isBackground) setIsLoading(true);
+      setError(null);
       const data = await getDonorDashboardApi();
       setDashboardData(data);
       if (data.dashboard?.isAvailable !== undefined) {
         setIsAvailable(data.dashboard.isAvailable);
       }
-    } catch (err) {
-      // Truthful empty fallback: no fake donations or fabricated emergency requests
-      setDashboardData({
-        dashboard: {
-          bloodGroup: (profile as any)?.bloodGroup || (user as any)?.bloodGroup || 'O+',
-          isAvailable: true,
-          stats: {
-            totalCompletedDonations: 0,
-            unitsDonated: 0,
-            compatibleActiveRequestsCount: 0,
-            unreadNotificationsCount: 0,
-          },
-          nearbyRequests: [],
-          nearbyCompatibleRequests: [],
-        },
-      });
+    } catch (err: unknown) {
+      if (!isBackground) {
+        setDashboardData(null);
+        setError(err instanceof Error ? err.message : 'Failed to load donor dashboard data.');
+      }
     } finally {
-      setIsLoading(false);
+      if (!isBackground) setIsLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchDashboard();
-  }, [user]);
+    fetchDashboard(false);
+  }, [fetchDashboard]);
+
+  // Real-time socket event listeners
+  useSocketEvent('emergency:alert', useCallback(() => {
+    fetchDashboard(true);
+  }, [fetchDashboard]));
+
+  useSocketEvent('request:updated', useCallback(() => {
+    fetchDashboard(true);
+  }, [fetchDashboard]));
+
+  // Polling fallback when Socket.IO is disconnected
+  useEffect(() => {
+    const clearPoll = () => {
+      if (pollTimerRef.current !== null) {
+        clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+    };
+
+    if (user && !isConnected) {
+      if (pollTimerRef.current === null) {
+        pollTimerRef.current = setInterval(() => {
+          fetchDashboard(true);
+        }, 12000);
+      }
+    } else {
+      clearPoll();
+    }
+
+    return clearPoll;
+  }, [user, isConnected, fetchDashboard]);
 
   const handleToggleAvailability = async () => {
     try {
@@ -73,14 +99,9 @@ export const DonorDashboardPage: React.FC = () => {
         `Availability status updated to: ${newStatus ? 'AVAILABLE TO DONATE' : 'UNAVAILABLE'}`,
         'Status Synchronized'
       );
-    } catch (err) {
-      // Toggle locally for demo feedback
-      const newStatus = !isAvailable;
-      setIsAvailable(newStatus);
-      toast.info(
-        `Availability toggled to ${newStatus ? 'AVAILABLE' : 'UNAVAILABLE'} (simulated)`,
-        'Status Updated'
-      );
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to synchronize availability status.';
+      toast.error(msg, 'Status Update Failed');
     } finally {
       setIsToggling(false);
     }
@@ -99,12 +120,26 @@ export const DonorDashboardPage: React.FC = () => {
     dashboardData?.dashboard?.stats?.compatibleActiveRequestsCount ??
     (dashboardData?.dashboard?.nearbyCompatibleRequests?.length ?? dashboardData?.dashboard?.nearbyRequests?.length ?? 0);
 
+  const [respondingRequestId, setRespondingRequestId] = useState<string | null>(null);
+  const [respondingAction, setRespondingAction] = useState<'ACCEPTED' | 'DECLINED' | null>(null);
+
   const handleRespond = async (requestId: string, action: 'ACCEPTED' | 'DECLINED') => {
+    if (respondingRequestId === requestId) return; // Prevent double clicks on same request
+
     const allRequests = [
       ...(dashboardData?.dashboard?.nearbyRequests || dashboardData?.nearbyRequests || []),
       ...(dashboardData?.dashboard?.nearbyCompatibleRequests || dashboardData?.nearbyCompatibleRequests || []),
     ];
     const targetReq = allRequests.find((r: any) => (r.id || r._id) === requestId);
+
+    // Guard: if the donor has already responded (state may be stale from a previous
+    // session or another tab), silently skip — the card already shows the status badge.
+    if (
+      targetReq?.myResponseStatus === 'ACCEPTED' ||
+      targetReq?.myResponseStatus === 'DECLINED'
+    ) {
+      return;
+    }
 
     if (action === 'ACCEPTED' && targetReq && donorBloodGroup) {
       if (!isBloodCompatible(donorBloodGroup, targetReq.bloodGroup, targetReq.bloodComponent)) {
@@ -117,19 +152,125 @@ export const DonorDashboardPage: React.FC = () => {
     }
 
     try {
+      setRespondingRequestId(requestId);
+      setRespondingAction(action);
+
       await respondToRequestApi(requestId, action);
-      toast.success(
-        `You have ${action.toLowerCase()} the emergency blood request. Hospital notified!`,
-        'Response Dispatched'
-      );
+
+      // Immediately update local state for authoritative rendering
+      setDashboardData((prev: any) => {
+        if (!prev) return prev;
+        const updateList = (list: any[]) =>
+          (list || []).map((r: any) =>
+            (r.id || r._id) === requestId
+              ? { ...r, myResponseStatus: action, donorResponseStatus: action }
+              : r
+          );
+        return {
+          ...prev,
+          dashboard: prev.dashboard
+            ? {
+                ...prev.dashboard,
+                nearbyRequests: updateList(prev.dashboard.nearbyRequests),
+                nearbyCompatibleRequests: updateList(prev.dashboard.nearbyCompatibleRequests),
+              }
+            : prev.dashboard,
+          nearbyRequests: updateList(prev.nearbyRequests),
+          nearbyCompatibleRequests: updateList(prev.nearbyCompatibleRequests),
+        };
+      });
+
+      if (action === 'ACCEPTED') {
+        toast.success(
+          'You have accepted the emergency blood request. Hospital notified!',
+          'Response Dispatched'
+        );
+      } else {
+        toast.info(
+          'You have declined the emergency blood request.',
+          'Response Recorded'
+        );
+      }
     } catch (err: any) {
       const msg = err?.message || `Failed to ${action.toLowerCase()} request.`;
-      toast.error(msg, 'Response Error');
+      const isAlreadyAccepted =
+        msg.toLowerCase().includes('already accepted') ||
+        msg.toLowerCase().includes("responded 'accepted'");
+      const isAlreadyDeclined =
+        msg.toLowerCase().includes('already declined') ||
+        msg.toLowerCase().includes("responded 'declined'");
+
+      if (isAlreadyAccepted) {
+        // Synchronize local state with authoritative server state
+        setDashboardData((prev: any) => {
+          if (!prev) return prev;
+          const updateList = (list: any[]) =>
+            (list || []).map((r: any) =>
+              (r.id || r._id) === requestId
+                ? { ...r, myResponseStatus: 'ACCEPTED', donorResponseStatus: 'ACCEPTED' }
+                : r
+            );
+          return {
+            ...prev,
+            dashboard: prev.dashboard
+              ? {
+                  ...prev.dashboard,
+                  nearbyRequests: updateList(prev.dashboard.nearbyRequests),
+                  nearbyCompatibleRequests: updateList(prev.dashboard.nearbyCompatibleRequests),
+                }
+              : prev.dashboard,
+            nearbyRequests: updateList(prev.nearbyRequests),
+            nearbyCompatibleRequests: updateList(prev.nearbyCompatibleRequests),
+          };
+        });
+        toast.info('Already accepted — you have already accepted this request.', 'Status Synchronized');
+      } else if (isAlreadyDeclined) {
+        setDashboardData((prev: any) => {
+          if (!prev) return prev;
+          const updateList = (list: any[]) =>
+            (list || []).map((r: any) =>
+              (r.id || r._id) === requestId
+                ? { ...r, myResponseStatus: 'DECLINED', donorResponseStatus: 'DECLINED' }
+                : r
+            );
+          return {
+            ...prev,
+            dashboard: prev.dashboard
+              ? {
+                  ...prev.dashboard,
+                  nearbyRequests: updateList(prev.dashboard.nearbyRequests),
+                  nearbyCompatibleRequests: updateList(prev.dashboard.nearbyCompatibleRequests),
+                }
+              : prev.dashboard,
+            nearbyRequests: updateList(prev.nearbyRequests),
+            nearbyCompatibleRequests: updateList(prev.nearbyCompatibleRequests),
+          };
+        });
+        toast.info('Already declined — you have already declined this request.', 'Status Synchronized');
+      } else {
+        toast.error(msg, 'Response Error');
+      }
+    } finally {
+      setRespondingRequestId(null);
+      setRespondingAction(null);
     }
   };
 
   return (
     <div className="space-y-8">
+      {/* Error Alert if API Fails */}
+      {error && (
+        <div className="p-4 bg-red-50 border border-red-200 rounded-2xl flex items-center justify-between">
+          <div>
+            <p className="text-sm font-bold text-red-800">Unable to load donor dashboard</p>
+            <p className="text-xs text-red-600">{error}</p>
+          </div>
+          <Button size="sm" variant="outline" onClick={() => fetchDashboard(false)}>
+            Retry
+          </Button>
+        </div>
+      )}
+
       {/* Welcome Banner */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-soft">
         <div className="space-y-1">
@@ -276,10 +417,12 @@ export const DonorDashboardPage: React.FC = () => {
                   : undefined) ||
                 'Location unavailable';
 
+              const reqId = req.id || req._id;
+              const respStatus = req.myResponseStatus || req.donorResponseStatus || 'NOTIFIED';
               return (
                 <EmergencyRequestCard
-                  key={req.id || req._id}
-                  id={req.id || req._id}
+                  key={reqId}
+                  id={reqId}
                   patientIdentifier={req.patientIdentifier}
                   bloodGroup={req.bloodGroup}
                   donorBloodGroup={donorBloodGroup}
@@ -287,14 +430,21 @@ export const DonorDashboardPage: React.FC = () => {
                   unitsRequired={req.unitsRequired}
                   urgency={req.urgency}
                   status={req.status || 'ACTIVE'}
+                  myResponseStatus={respStatus}
+                  donorResponseStatus={respStatus}
+                  coordinationStatus={req.coordinationStatus ?? null}
+                  isResponding={respondingRequestId === reqId}
+                  respondingAction={respondingRequestId === reqId ? respondingAction : null}
                   hospitalName={hospName}
                   city={hospCity}
                   distanceFormatted={req.distanceFormatted}
                   estimatedTransitTimeMinutes={req.estimatedTransitTimeMinutes}
                   requiredWithinHours={req.requiredWithinHours}
+                  createdAt={req.createdAt}
+                  expiresAt={req.expiresAt}
                   notes={req.notes}
-                  onAccept={() => handleRespond(req.id || req._id, 'ACCEPTED')}
-                  onDecline={() => handleRespond(req.id || req._id, 'DECLINED')}
+                  onAccept={() => handleRespond(reqId, 'ACCEPTED')}
+                  onDecline={() => handleRespond(reqId, 'DECLINED')}
                   onViewDetails={() => {
                     toast.info(
                       `Hospital: ${hospName} | Location: ${hospCity} | Details: ${req.notes || 'Emergency transfusion'}`,

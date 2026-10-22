@@ -22,6 +22,11 @@ const potentialMatchEntrySchema = new Schema(
       enum: ['NOTIFIED', 'ACCEPTED', 'DECLINED'] as PotentialMatchStatus[],
       default: 'NOTIFIED',
     },
+    coordinationStatus: {
+      type: String,
+      enum: ['PENDING', 'HOSPITAL_REVIEWED', 'CONTACTED'],
+      default: 'PENDING',
+    },
     matchScore: {
       type: Number,
       default: 0,
@@ -37,6 +42,12 @@ const potentialMatchEntrySchema = new Schema(
       default: Date.now,
     },
     respondedAt: {
+      type: Date,
+    },
+    reviewedAt: {
+      type: Date,
+    },
+    contactedAt: {
       type: Date,
     },
   },

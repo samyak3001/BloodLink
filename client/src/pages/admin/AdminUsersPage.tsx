@@ -22,56 +22,21 @@ export const AdminUsersPage: React.FC = () => {
   const [confirmOpen, setConfirmOpen] = useState<boolean>(false);
   const [pendingUser, setPendingUser] = useState<{ id: string; name: string; newStatus: 'ACTIVE' | 'SUSPENDED' } | null>(null);
 
+  const [error, setError] = useState<string | null>(null);
+
   const fetchUsers = async () => {
     try {
       setIsLoading(true);
+      setError(null);
       const params: Record<string, string> = {};
       if (selectedRole !== 'ALL') params.role = selectedRole;
 
       const data = await getAdminUsersApi(params);
       setUsers(data.users || []);
-    } catch (err) {
-      // Fallback demo users
-      setUsers([
-        {
-          id: 'u-1',
-          name: 'Sarah Connor',
-          email: 'donor.test@example.com',
-          role: 'DONOR',
-          bloodGroup: 'O+',
-          status: 'ACTIVE',
-          city: 'Central District',
-          createdAt: '2026-06-12',
-        },
-        {
-          id: 'u-2',
-          name: 'Apollo Emergency Trauma Center',
-          email: 'hospital.test@example.com',
-          role: 'HOSPITAL',
-          status: 'ACTIVE',
-          city: 'Central Metropolis',
-          createdAt: '2026-05-20',
-        },
-        {
-          id: 'u-3',
-          name: 'Platform Administrator',
-          email: 'admin.test@example.com',
-          role: 'ADMIN',
-          status: 'ACTIVE',
-          city: 'Headquarters',
-          createdAt: '2026-01-01',
-        },
-        {
-          id: 'u-4',
-          name: 'David Vance',
-          email: 'david.vance@example.org',
-          role: 'DONOR',
-          bloodGroup: 'A-',
-          status: 'SUSPENDED',
-          city: 'West Suburbs',
-          createdAt: '2026-07-04',
-        },
-      ]);
+    } catch (err: any) {
+      setUsers([]);
+      setError(err?.response?.data?.message || err?.message || 'Failed to retrieve user accounts from server.');
+      toast.error('Unable to fetch users directory from database.', 'Data Load Error');
     } finally {
       setIsLoading(false);
     }
@@ -102,17 +67,10 @@ export const AdminUsersPage: React.FC = () => {
             : u
         )
       );
-    } catch (err) {
-      toast.info(
-        `User status updated to ${pendingUser.newStatus} (simulated update).`,
-        'Status Updated'
-      );
-      setUsers((prev) =>
-        prev.map((u) =>
-          u.id === pendingUser.id || u._id === pendingUser.id
-            ? { ...u, status: pendingUser.newStatus }
-            : u
-        )
+    } catch (err: any) {
+      toast.error(
+        err?.response?.data?.message || err?.message || `Failed to update status for ${pendingUser.name}.`,
+        'Action Failed'
       );
     } finally {
       setConfirmOpen(false);
@@ -152,6 +110,15 @@ export const AdminUsersPage: React.FC = () => {
           Refresh Directory
         </Button>
       </div>
+
+      {error && (
+        <div className="p-4 rounded-xl bg-emergency-50 border border-emergency-200 flex items-center justify-between">
+          <p className="text-xs font-semibold text-emergency-700">{error}</p>
+          <Button size="sm" variant="outline" onClick={fetchUsers}>
+            Retry
+          </Button>
+        </div>
+      )}
 
       {/* Filter Toolbar */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-soft-sm grid grid-cols-1 sm:grid-cols-2 gap-3">

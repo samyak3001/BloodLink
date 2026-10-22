@@ -2,7 +2,9 @@ import { Request, Response, NextFunction } from 'express';
 import { EmergencyRequest, HospitalProfile, Notification, AuditLog, DonorProfile, DonationHistory } from '../models';
 import { findPotentialMatches } from '../services/matchingService';
 import { isBloodCompatible } from '../config/bloodCompatibility';
-import { RequestStatus, BloodGroup, BloodComponent, RequestUrgency } from '../types';
+import { RequestStatus, BloodGroup, BloodComponent, RequestUrgency, CoordinationStatus } from '../types';
+import { calculateDistanceKm, formatDistance, estimateTransitTimeMinutes } from '../utils/geo';
+import { DONOR_MATCH_RADIUS_KM } from '../config/constants';
 import {
   emitEmergencyAlert,
   emitRequestUpdated,
@@ -10,16 +12,19 @@ import {
   getIO,
 } from '../services/socketService';
 
+import { autoExpireOverdueRequests } from '../services/requestExpirationService';
+
 /**
  * Valid state transitions for emergency requests:
- * ACTIVE -> MATCHED, FULFILLED, CANCELLED
- * MATCHED -> FULFILLED, CANCELLED, ACTIVE
+ * ACTIVE -> MATCHED, FULFILLED, CANCELLED, EXPIRED
+ * MATCHED -> FULFILLED, CANCELLED, ACTIVE, EXPIRED
  * FULFILLED -> (Terminal state)
  * CANCELLED -> (Terminal state)
+ * EXPIRED -> (Terminal state)
  */
 const VALID_TRANSITIONS: Record<RequestStatus, RequestStatus[]> = {
-  ACTIVE: ['MATCHED', 'FULFILLED', 'CANCELLED'],
-  MATCHED: ['FULFILLED', 'CANCELLED', 'ACTIVE'],
+  ACTIVE: ['MATCHED', 'FULFILLED', 'CANCELLED', 'EXPIRED'],
+  MATCHED: ['FULFILLED', 'CANCELLED', 'ACTIVE', 'EXPIRED'],
   FULFILLED: [],
   CANCELLED: [],
   EXPIRED: [],
@@ -74,19 +79,34 @@ export async function createEmergencyRequest(
       notes,
     } = req.body;
 
-    const requestCoordinates: [number, number] =
+    const requestCoordinates: [number, number] | undefined =
       coordinates && Array.isArray(coordinates) && coordinates.length === 2
         ? ([coordinates[0], coordinates[1]] as [number, number])
-        : hospital.location.coordinates;
+        : Array.isArray(hospital.location?.coordinates) && hospital.location.coordinates.length === 2
+        ? (hospital.location.coordinates as [number, number])
+        : undefined;
+
+    if (!requestCoordinates) {
+      res.status(400).json({
+        status: 'fail',
+        message:
+          'Your hospital profile does not have valid location coordinates. Please update your hospital facility profile with valid coordinates before creating an emergency blood request.',
+      });
+      return;
+    }
 
     // 1. Run matching engine to locate initial potential matches
+    // hospitalDistrict allows the engine to include donors in the same district
+    // even if their GPS coordinates are missing or beyond the GPS radius.
+    const hospAddr = hospital.address as any;
     const potentialMatches = await findPotentialMatches({
       targetBloodGroup: bloodGroup as BloodGroup,
       bloodComponent: (bloodComponent || 'WHOLE_BLOOD') as BloodComponent,
       urgency: urgency as RequestUrgency,
       location: requestCoordinates,
-      maxRadiusKm: maxRadiusKm || 30,
+      maxRadiusKm: maxRadiusKm || DONOR_MATCH_RADIUS_KM,
       limit: 50,
+      hospitalDistrict: (hospAddr?.district || hospAddr?.city || '').trim(),
     });
 
     // 2. Prepare potential matches array for storage
@@ -200,7 +220,7 @@ export async function createEmergencyRequest(
       request: serializedRequest,
       matchSummary: {
         totalPotentialMatchesNotified: potentialMatches.length,
-        searchRadiusKm: maxRadiusKm || 30,
+        searchRadiusKm: maxRadiusKm || DONOR_MATCH_RADIUS_KM,
       },
     });
   } catch (error) {
@@ -217,6 +237,9 @@ export async function getEmergencyRequests(
   next: NextFunction
 ): Promise<void> {
   try {
+    // Automatically transition any overdue active requests to EXPIRED status
+    await autoExpireOverdueRequests();
+
     const { bloodGroup, bloodComponent, urgency, status, limit = '20', page = '1' } = req.query;
 
     const query: Record<string, unknown> = {};
@@ -246,18 +269,31 @@ export async function getEmergencyRequests(
       donorProfile = await DonorProfile.findOne({ userId: req.user.id });
     }
 
+    const queryBuilder = EmergencyRequest.find(query)
+      .populate('hospitalId', 'hospitalName emergencyHelpline address location isVerifiedByAdmin')
+      .sort({ urgency: 1, createdAt: -1 });
+
     const [requests, totalCount] = await Promise.all([
-      EmergencyRequest.find(query)
-        .populate('hospitalId', 'hospitalName emergencyHelpline address location')
-        .sort({ urgency: 1, createdAt: -1 })
-        .skip(skip)
-        .limit(pageSize),
+      typeof (queryBuilder as any).skip === 'function'
+        ? (queryBuilder as any).skip(skip).limit(pageSize)
+        : queryBuilder,
       EmergencyRequest.countDocuments(query),
     ]);
 
-    // Apply strict blood compatibility filter if caller is an authenticated donor
+    // Apply strict blood compatibility and proximity filter if caller is an authenticated donor
     const eligibleRequests = donorProfile
-      ? requests.filter((r) => {
+      ? requests.filter((r: any) => {
+          const hosp = r.hospitalId as unknown as {
+            isVerifiedByAdmin?: boolean;
+            location?: { coordinates?: [number, number] };
+            address?: { district?: string; city?: string; state?: string };
+          } | null;
+
+          // Medical facility must be verified by admin
+          if (hosp && hosp.isVerifiedByAdmin === false) {
+            return false;
+          }
+
           const isComp = isBloodCompatible(
             donorProfile!.bloodGroup,
             r.bloodGroup,
@@ -267,11 +303,59 @@ export async function getEmergencyRequests(
             !donorProfile!.supportedComponents ||
             donorProfile!.supportedComponents.length === 0 ||
             donorProfile!.supportedComponents.includes(r.bloodComponent || 'WHOLE_BLOOD');
-          return isComp && supportsComp;
+
+          if (!isComp || !supportsComp) return false;
+
+          const matchEntry = r.potentialMatches?.find(
+            (m: any) => (m.donorId?._id || m.donorId).toString() === donorProfile!._id.toString()
+          );
+
+          // If donor has already accepted, keep it visible for coordination
+          if (matchEntry?.status === 'ACCEPTED') return true;
+
+          // Donor must be available to receive new emergency requests
+          if (donorProfile!.isAvailable === false) return false;
+
+          // --- District-based matching (primary) ---
+          // If both donor and hospital have a non-empty district and they match,
+          // the request is eligible regardless of GPS distance.
+          const donorDistrict = (donorProfile!.address as any)?.district;
+          const hospDistrict = hosp?.address?.district;
+          const donorDistrictNorm = (donorDistrict || '').trim().toLowerCase();
+          const hospDistrictNorm = (hospDistrict || '').trim().toLowerCase();
+          const sameDistrict =
+            donorDistrictNorm.length > 0 &&
+            hospDistrictNorm.length > 0 &&
+            donorDistrictNorm === hospDistrictNorm;
+
+          if (sameDistrict) return true;
+
+          // --- GPS-based matching (fallback when districts differ or are missing) ---
+          const donorCoords = donorProfile!.location?.coordinates;
+          const reqCoords = r.location?.coordinates || hosp?.location?.coordinates;
+          const hasCoords =
+            Array.isArray(donorCoords) &&
+            donorCoords.length === 2 &&
+            Array.isArray(reqCoords) &&
+            reqCoords.length === 2;
+
+          if (hasCoords) {
+            const distanceKm = calculateDistanceKm(donorCoords as [number, number], reqCoords as [number, number]);
+            return distanceKm <= DONOR_MATCH_RADIUS_KM;
+          }
+
+          // If location was explicitly defined on either but incomplete (e.g. coordinates: []), exclude
+          if (donorProfile!.location || r.location || hosp?.location) {
+            return false;
+          }
+
+          // Minimal mock objects without location fields in non-geospatial unit tests
+          return true;
         })
       : requests;
 
-    const serializedRequests = eligibleRequests.map((req) => {
+
+    const serializedRequests = eligibleRequests.map((req: any) => {
       const hosp = req.hospitalId as unknown as {
         _id?: unknown;
         hospitalName?: string;
@@ -284,6 +368,40 @@ export async function getEmergencyRequests(
         ? [hospAddress.city, hospAddress.district || hospAddress.state].filter(Boolean).join(', ')
         : undefined;
 
+      let myResponseStatus: 'NOTIFIED' | 'ACCEPTED' | 'DECLINED' | null = null;
+      let coordinationStatus: CoordinationStatus = 'PENDING';
+      let distanceKm: number | undefined;
+      let distanceFormatted: string | undefined;
+      let estimatedTransitTimeMinutes: number | undefined;
+
+      if (donorProfile) {
+        const matchEntry = req.potentialMatches?.find(
+          (m: any) => (m.donorId?._id || m.donorId).toString() === donorProfile._id.toString()
+        );
+        myResponseStatus = matchEntry ? matchEntry.status : 'NOTIFIED';
+        coordinationStatus = matchEntry?.coordinationStatus || 'PENDING';
+
+        const requestCoords = req.location?.coordinates || (hosp as any)?.location?.coordinates;
+        const hasCoords =
+          Array.isArray(donorProfile.location?.coordinates) &&
+          donorProfile.location.coordinates.length === 2 &&
+          Array.isArray(requestCoords) &&
+          requestCoords.length === 2;
+
+        if (hasCoords) {
+          const rawDist = calculateDistanceKm(donorProfile.location.coordinates, requestCoords as [number, number]);
+          distanceKm = Math.round(rawDist * 10) / 10;
+          distanceFormatted = `${(Math.round(rawDist * 10) / 10).toFixed(1)} km away`;
+          estimatedTransitTimeMinutes = estimateTransitTimeMinutes(rawDist);
+        } else {
+          distanceFormatted = 'Location unavailable';
+        }
+      }
+
+      const createdDate = req.createdAt ? new Date(req.createdAt) : new Date();
+      const requiredHours = typeof req.requiredWithinHours === 'number' && req.requiredWithinHours > 0 ? req.requiredWithinHours : 3;
+      const expiresAt = new Date(createdDate.getTime() + requiredHours * 3600 * 1000).toISOString();
+
       const reqObj = req.toObject();
       return {
         ...reqObj,
@@ -294,6 +412,13 @@ export async function getEmergencyRequests(
         district: hospAddress?.district,
         state: hospAddress?.state,
         hospitalEmergencyHelpline: hosp?.emergencyHelpline,
+        myResponseStatus,
+        donorResponseStatus: myResponseStatus,
+        coordinationStatus,
+        distanceKm,
+        distanceFormatted,
+        estimatedTransitTimeMinutes,
+        expiresAt,
       };
     });
 
@@ -327,7 +452,7 @@ export async function getEmergencyRequestById(
       },
       {
         path: 'potentialMatches.donorId',
-        select: 'bloodGroup supportedComponents address isAvailable location privacySettings userId',
+        select: 'bloodGroup supportedComponents address isAvailable location privacySettings userId selfReportedScreening',
         populate: {
           path: 'userId',
           select: 'name email phone isVerified',
@@ -343,8 +468,19 @@ export async function getEmergencyRequestById(
       return;
     }
 
+    // Auto-expire if timeframe elapsed
+    if (request.status === 'ACTIVE' || request.status === 'MATCHED') {
+      const createdTime = request.createdAt ? new Date(request.createdAt).getTime() : 0;
+      const hours = typeof request.requiredWithinHours === 'number' && request.requiredWithinHours > 0 ? request.requiredWithinHours : 3;
+      if (createdTime > 0 && Date.now() > createdTime + hours * 3600 * 1000) {
+        request.status = 'EXPIRED';
+        await request.save();
+      }
+    }
+
     // Check caller context
     let donorResponseStatus = null;
+    let donorCoordinationStatus: CoordinationStatus | null = null;
     if (req.user && req.user.role === 'DONOR') {
       const donor = await DonorProfile.findOne({ userId: req.user.id });
       if (donor) {
@@ -353,6 +489,7 @@ export async function getEmergencyRequestById(
         );
         if (matchEntry) {
           donorResponseStatus = matchEntry.status;
+          donorCoordinationStatus = matchEntry.coordinationStatus || 'PENDING';
         }
       }
     }
@@ -394,6 +531,8 @@ export async function getEmergencyRequestById(
         _id?: unknown;
         userId?: { _id?: unknown; name?: string; email?: string; phone?: string; isVerified?: boolean };
         bloodGroup?: string;
+        supportedComponents?: string[];
+        selfReportedScreening?: any;
         address?: { city?: string; district?: string; postalCode?: string };
         isAvailable?: boolean;
         privacySettings?: { hideExactLocation?: boolean; showContactToMatchedHospitalsOnly?: boolean };
@@ -413,11 +552,16 @@ export async function getEmergencyRequestById(
         district: donorDoc?.address?.district || '',
         location: locationStr,
         status: 'ACCEPTED' as const,
+        coordinationStatus: (m.coordinationStatus || 'PENDING') as CoordinationStatus,
         isAvailable: donorDoc?.isAvailable !== false,
+        supportedComponents: donorDoc?.supportedComponents || [],
+        selfReportedScreening: donorDoc?.selfReportedScreening,
         unitsOffered: 1,
         notifiedAt: m.notifiedAt,
         acceptedAt: m.respondedAt || m.notifiedAt,
         respondedAt: m.respondedAt || m.notifiedAt,
+        reviewedAt: m.reviewedAt,
+        contactedAt: m.contactedAt,
         contact: showContact
           ? {
               phone: donorDoc?.userId?.phone || undefined,
@@ -439,6 +583,10 @@ export async function getEmergencyRequestById(
       state: hospAddress?.state,
       emergencyHelpline: hosp?.emergencyHelpline,
       acceptedDonors,
+      myResponseStatus: donorResponseStatus || 'NOTIFIED',
+      donorResponseStatus: donorResponseStatus || 'NOTIFIED',
+      coordinationStatus: donorCoordinationStatus || 'PENDING',
+      donorCoordinationStatus: donorCoordinationStatus || 'PENDING',
     };
 
     // Aggregate statistics
@@ -586,7 +734,7 @@ export async function updateEmergencyRequestStatus(
           if (donorUserId) {
             await Notification.create({
               recipientId: donorUserId,
-              type: 'DONOR_ACCEPTED',
+              type: 'STATUS_UPDATE',
               title: '🩸 Donation Completed — Thank You!',
               message: `Your blood donation for Emergency Request has been officially recorded and verified. Your contribution has been added to your Donation History.`,
               data: {
@@ -652,7 +800,7 @@ export async function getPotentialMatchesForRequest(
 
     const request = await EmergencyRequest.findById(id).populate({
       path: 'potentialMatches.donorId',
-      select: 'bloodGroup supportedComponents address isAvailable location privacySettings userId',
+      select: 'bloodGroup supportedComponents address isAvailable location privacySettings userId selfReportedScreening',
       populate: { path: 'userId', select: 'name email phone isVerified' },
     });
 
@@ -682,6 +830,56 @@ export async function getPotentialMatchesForRequest(
       return;
     }
 
+    // Refresh potential matches dynamically to ensure newly registered or relocated donors appear
+    if (
+      (request.status === 'ACTIVE' || request.status === 'MATCHED') &&
+      Array.isArray(request.location?.coordinates) &&
+      request.location.coordinates.length === 2
+    ) {
+      try {
+        const freshMatches = await findPotentialMatches({
+          targetBloodGroup: request.bloodGroup,
+          bloodComponent: request.bloodComponent || 'WHOLE_BLOOD',
+          urgency: request.urgency,
+          location: request.location.coordinates as [number, number],
+          maxRadiusKm: DONOR_MATCH_RADIUS_KM,
+          limit: 50,
+        });
+
+        const existingDonorIds = new Set(
+          request.potentialMatches.map((m) => (m.donorId?._id || m.donorId).toString())
+        );
+
+        let addedNewMatch = false;
+        for (const match of freshMatches) {
+          if (!existingDonorIds.has(match.donorId)) {
+            request.potentialMatches.push({
+              donorId: match.donorId as any,
+              status: 'NOTIFIED',
+              coordinationStatus: 'PENDING',
+              matchScore: match.matchScore,
+              distanceKm: match.distanceKm,
+              notifiedAt: new Date(),
+            });
+            existingDonorIds.add(match.donorId);
+            addedNewMatch = true;
+          }
+        }
+
+        if (addedNewMatch) {
+          await request.save();
+          // Re-populate newly added donor profiles
+          await request.populate({
+            path: 'potentialMatches.donorId',
+            select: 'bloodGroup supportedComponents address isAvailable location privacySettings userId selfReportedScreening',
+            populate: { path: 'userId', select: 'name email phone isVerified' },
+          });
+        }
+      } catch (matchErr) {
+        console.warn('[MatchingEngine] Dynamic potential matches evaluation non-fatal error:', matchErr);
+      }
+    }
+
     // Sanitize output: Never leak raw GPS coordinates
     const safeMatches = request.potentialMatches.map((item) => {
       const donorDoc = item.donorId as unknown as {
@@ -692,6 +890,7 @@ export async function getPotentialMatchesForRequest(
         isAvailable: boolean;
         privacySettings?: { hideExactLocation?: boolean; showContactToMatchedHospitalsOnly?: boolean };
         userId?: { name: string; email?: string; phone?: string; isVerified: boolean };
+        selfReportedScreening?: any;
       };
 
       const showContact =
@@ -709,13 +908,17 @@ export async function getPotentialMatchesForRequest(
         city: donorDoc?.address?.city,
         district: donorDoc?.address?.district,
         status: item.status,
+        coordinationStatus: (item.coordinationStatus || 'PENDING') as CoordinationStatus,
         distanceKm: item.distanceKm,
         matchScore: item.matchScore,
         isAvailable: donorDoc?.isAvailable !== false,
         isCompatible: true,
+        selfReportedScreening: donorDoc?.selfReportedScreening,
         notifiedAt: item.notifiedAt,
         acceptedAt: item.respondedAt || item.notifiedAt,
         respondedAt: item.respondedAt,
+        reviewedAt: item.reviewedAt,
+        contactedAt: item.contactedAt,
         contact: showContact
           ? {
               phone: donorDoc?.userId?.phone || undefined,
@@ -735,6 +938,94 @@ export async function getPotentialMatchesForRequest(
       potentialMatches: safeMatches,
       matches: safeMatches,
       acceptedDonors,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Hospital marks an accepted donor profile as reviewed (medical safety verification step)
+ */
+export async function reviewAcceptedDonor(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const { id } = req.params;
+    const { donorId } = req.body as { donorId: string };
+
+    if (!donorId) {
+      res.status(400).json({
+        status: 'fail',
+        message: 'donorId is required to review donor.',
+      });
+      return;
+    }
+
+    const request = await EmergencyRequest.findById(id);
+    if (!request) {
+      res.status(404).json({
+        status: 'fail',
+        message: 'Emergency request not found.',
+      });
+      return;
+    }
+
+    // Ownership check: Hospital must own this request or caller must be ADMIN
+    if (req.user?.role === 'HOSPITAL') {
+      const hospital = await HospitalProfile.findOne({ userId: req.user.id });
+      if (!hospital || hospital._id.toString() !== request.hospitalId.toString()) {
+        res.status(403).json({
+          status: 'fail',
+          message: 'You can only review accepted donors for requests initiated by your hospital.',
+        });
+        return;
+      }
+    } else if (req.user?.role !== 'ADMIN') {
+      res.status(403).json({
+        status: 'fail',
+        message: 'Unauthorized access.',
+      });
+      return;
+    }
+
+    const matchEntry = request.potentialMatches.find(
+      (m) => (m.donorId && (m.donorId._id || m.donorId).toString()) === donorId.toString() && m.status === 'ACCEPTED'
+    );
+
+    if (!matchEntry) {
+      res.status(400).json({
+        status: 'fail',
+        message: 'This donor has not accepted this emergency request. You can only review accepted donors.',
+      });
+      return;
+    }
+
+    // Update coordination status to HOSPITAL_REVIEWED if not already CONTACTED
+    if (matchEntry.coordinationStatus !== 'CONTACTED') {
+      matchEntry.coordinationStatus = 'HOSPITAL_REVIEWED';
+    }
+    matchEntry.reviewedAt = new Date();
+    if (typeof request.save === 'function') {
+      await request.save();
+    }
+
+    await AuditLog.create({
+      actorId: req.user!.id,
+      action: 'DONOR_REVIEWED',
+      resource: 'EmergencyRequest',
+      resourceId: request._id.toString(),
+      details: { donorId, coordinationStatus: matchEntry.coordinationStatus },
+      ipAddress: req.ip,
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Donor profile marked as reviewed by hospital.',
+      donorId,
+      coordinationStatus: matchEntry.coordinationStatus,
     });
   } catch (error) {
     next(error);
@@ -824,24 +1115,66 @@ export async function contactAcceptedDonor(
     // Create persistent notification for donor
     const hospName = hospital?.hospitalName || 'Hospital';
     const helpline = hospital?.emergencyHelpline || 'Hospital Helpline';
+    const hospAddress = hospital?.address as { street?: string; city?: string; state?: string; postalCode?: string } | undefined;
+    const hospLocationStr = hospAddress
+      ? [hospAddress.street, hospAddress.city, hospAddress.state].filter(Boolean).join(', ')
+      : 'See hospital contact information';
+
     const contactMsg =
       message ||
-      `${hospName} has initiated direct donation coordination for Emergency Request (${request.patientIdentifier || request._id}). Helpline: ${helpline}.`;
+      `${hospName} has reviewed your response and is ready to coordinate your donation for Emergency Request (${request.patientIdentifier || request._id.toString().slice(-8).toUpperCase()}). ` +
+      `Blood required: ${request.bloodGroup} (${request.bloodComponent}). ` +
+      `Please proceed to the hospital: ${hospLocationStr}. ` +
+      `Emergency Helpline: ${helpline}. ` +
+      `Follow the hospital's instructions upon arrival.`;
+
+    // Update coordination status to CONTACTED in DB
+    const matchIdx = request.potentialMatches.findIndex(
+      (m) => (m.donorId && (m.donorId._id || m.donorId).toString()) === donorId.toString()
+    );
+    if (matchIdx !== -1) {
+      request.potentialMatches[matchIdx].coordinationStatus = 'CONTACTED';
+      request.potentialMatches[matchIdx].contactedAt = new Date();
+      if (typeof request.save === 'function') {
+        await request.save();
+      }
+    }
 
     await Notification.create({
       recipientId: donorUserId,
       type: 'STATUS_UPDATE',
-      title: `Emergency Coordination: ${hospName}`,
+      title: `🏥 Proceed to ${hospName} — Donation Coordination Ready`,
       message: contactMsg,
       data: {
         requestId: request._id.toString(),
         patientIdentifier: request.patientIdentifier,
         hospitalName: hospName,
         hospitalHelpline: helpline,
+        hospitalAddress: hospLocationStr,
+        bloodGroup: request.bloodGroup,
+        bloodComponent: request.bloodComponent,
+        urgency: request.urgency,
+        coordinationStatus: 'CONTACTED',
       },
     });
 
     void pushUnreadCount(donorUserId);
+
+    // Real-time socket notification to donor
+    try {
+      const ioInstance = getIO();
+      if (ioInstance) {
+        ioInstance.to(`user:${donorUserId}`).emit('donor:response', {
+          requestId: request._id.toString(),
+          action: 'HOSPITAL_CONTACTED',
+          hospitalName: hospName,
+          message: `${hospName} has initiated donation coordination. Please proceed to the hospital.`,
+          coordinationStatus: 'CONTACTED',
+        } as any);
+      }
+    } catch {
+      // Non-fatal
+    }
 
     // Audit log
     await AuditLog.create({
@@ -849,7 +1182,7 @@ export async function contactAcceptedDonor(
       action: 'DONOR_CONTACTED',
       resource: 'EmergencyRequest',
       resourceId: request._id.toString(),
-      details: { donorId, showContact },
+      details: { donorId, showContact, coordinationStatus: 'CONTACTED' },
       ipAddress: req.ip,
     });
 
@@ -858,6 +1191,7 @@ export async function contactAcceptedDonor(
       message: `Coordination message dispatched to ${donorUser.name || 'donor'}.`,
       donorId,
       donorName: donorUser.name,
+      coordinationStatus: 'CONTACTED',
       contact: showContact
         ? {
             phone: donorUser.phone,

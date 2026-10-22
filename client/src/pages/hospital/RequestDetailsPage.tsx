@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -23,6 +23,7 @@ import {
   getPotentialMatchesApi,
   updateRequestStatusApi,
   contactAcceptedDonorApi,
+  reviewAcceptedDonorApi,
 } from '../../api/requestsApi';
 import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
@@ -38,7 +39,7 @@ import { RequestStatus } from '../../types';
 export const RequestDetailsPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const { toast } = useToast();
-  const { socket } = useSocket();
+  const { socket, isConnected } = useSocket();
 
   // Join Socket.IO Request Room for real-time donor response pushes
   useRequestRoom(id);
@@ -46,6 +47,8 @@ export const RequestDetailsPage: React.FC = () => {
   const [request, setRequest] = useState<any>(null);
   const [matches, setMatches] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pendingStatus, setPendingStatus] = useState<RequestStatus | null>(null);
@@ -61,85 +64,33 @@ export const RequestDetailsPage: React.FC = () => {
   const [customMessage, setCustomMessage] = useState('');
   const [isSendingMessage, setIsSendingMessage] = useState(false);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async (isBackground = false) => {
     if (!id) return;
     try {
-      setIsLoading(true);
+      if (!isBackground) {
+        setIsLoading(true);
+        setError(null);
+      }
       const reqData = await getEmergencyRequestByIdApi(id);
       setRequest(reqData.request);
 
       const matchData = await getPotentialMatchesApi(id);
       setMatches(matchData.potentialMatches || matchData.matches || []);
-    } catch (err) {
-      // Fallback demo state
-      setRequest({
-        id: id || 'req-demo',
-        patientIdentifier: 'EMERGENCY-TRAUMA-91',
-        bloodGroup: 'O-',
-        bloodComponent: 'WHOLE_BLOOD',
-        unitsRequired: 3,
-        urgency: 'CRITICAL',
-        status: 'ACTIVE',
-        requiredWithinHours: 3,
-        hospitalName: 'Apollo Emergency Trauma Center',
-        city: 'Central District',
-        notes: 'Immediate surgical transfusion needed for multi-trauma resuscitation.',
-        acceptedDonors: [
-          {
-            donorId: 'd-101',
-            name: 'Marcus Vance',
-            bloodGroup: 'O-',
-            location: 'Central District',
-            status: 'ACCEPTED',
-            acceptedAt: new Date(Date.now() - 1000 * 60 * 12).toISOString(),
-            contact: { phone: '+91 98765 43210' },
-          },
-        ],
-      });
-
-      setMatches([
-        {
-          id: 'd-101',
-          name: 'Marcus Vance (Certified Donor)',
-          bloodGroup: 'O-',
-          isAvailable: true,
-          supportedComponents: ['WHOLE_BLOOD', 'RED_CELLS'],
-          city: 'Downtown District',
-          distanceKm: 1.8,
-          matchScore: 98,
-          isCompatible: true,
-        },
-        {
-          id: 'd-103',
-          name: 'David Kim (Verified Donor)',
-          bloodGroup: 'O-',
-          isAvailable: true,
-          supportedComponents: ['WHOLE_BLOOD'],
-          city: 'Central West Corridor',
-          distanceKm: 3.2,
-          matchScore: 92,
-          isCompatible: true,
-        },
-        {
-          id: 'd-104',
-          name: 'Sarah Lin (Certified Donor)',
-          bloodGroup: 'O-',
-          isAvailable: true,
-          supportedComponents: ['WHOLE_BLOOD', 'PLATELETS'],
-          city: 'East Health Hub',
-          distanceKm: 4.6,
-          matchScore: 87,
-          isCompatible: true,
-        },
-      ]);
+    } catch (err: any) {
+      if (!isBackground) {
+        setRequest(null);
+        setMatches([]);
+        setError(err?.response?.data?.message || err?.message || 'Failed to load emergency request details');
+        toast.error('Unable to retrieve emergency request from server.', 'Load Error');
+      }
     } finally {
-      setIsLoading(false);
+      if (!isBackground) setIsLoading(false);
     }
-  };
+  }, [id]);
 
   useEffect(() => {
-    fetchData();
-  }, [id]);
+    fetchData(false);
+  }, [fetchData]);
 
   // Live Socket.IO updates for this emergency request
   useEffect(() => {
@@ -151,13 +102,13 @@ export const RequestDetailsPage: React.FC = () => {
           `Donor ${data.donorName || ''} has ${data.action.toLowerCase()} this emergency request!`,
           'Live Donor Response'
         );
-        fetchData();
+        fetchData(true);
       }
     };
 
     const handleRequestUpdated = (data: any) => {
       if (data.requestId === id) {
-        fetchData();
+        fetchData(true);
       }
     };
 
@@ -168,7 +119,29 @@ export const RequestDetailsPage: React.FC = () => {
       socket.off('donor:response', handleDonorResponse);
       socket.off('request:updated', handleRequestUpdated);
     };
-  }, [socket, id]);
+  }, [socket, id, fetchData]);
+
+  // Polling fallback when Socket.IO is disconnected
+  useEffect(() => {
+    const clearPoll = () => {
+      if (pollTimerRef.current !== null) {
+        clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+    };
+
+    if (id && !isConnected) {
+      if (pollTimerRef.current === null) {
+        pollTimerRef.current = setInterval(() => {
+          fetchData(true);
+        }, 12000);
+      }
+    } else {
+      clearPoll();
+    }
+
+    return clearPoll;
+  }, [id, isConnected, fetchData]);
 
   const handlePromptStatus = (status: RequestStatus) => {
     if (status === 'FULFILLED') {
@@ -231,6 +204,22 @@ export const RequestDetailsPage: React.FC = () => {
     setContactModalOpen(true);
   };
 
+  const [reviewingDonorId, setReviewingDonorId] = useState<string | null>(null);
+
+  const handleReviewDonor = async (donorId: string) => {
+    if (!id || reviewingDonorId) return;
+    try {
+      setReviewingDonorId(donorId);
+      await reviewAcceptedDonorApi(id, donorId);
+      toast.success('Donor medical screening profile marked as reviewed.', 'Profile Reviewed');
+      fetchData();
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to review donor profile.', 'Review Error');
+    } finally {
+      setReviewingDonorId(null);
+    }
+  };
+
   const handleDispatchMessage = async () => {
     if (!id || !selectedDonor) return;
     try {
@@ -241,6 +230,7 @@ export const RequestDetailsPage: React.FC = () => {
         'Alert Dispatched'
       );
       setContactModalOpen(false);
+      fetchData();
     } catch (err: any) {
       toast.error(err.message || 'Failed to dispatch coordination message.', 'Dispatch Error');
     } finally {
@@ -262,12 +252,21 @@ export const RequestDetailsPage: React.FC = () => {
 
   if (!request) {
     return (
-      <EmptyState
-        title="Emergency Request Not Found"
-        description="The requested emergency record does not exist or has been removed."
-        actionLabel="Return to Requests"
-        onAction={() => window.history.back()}
-      />
+      <div className="space-y-6">
+        <Link
+          to="/hospital/requests"
+          className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-800"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to Emergency Requests Directory
+        </Link>
+        <EmptyState
+          title={error ? 'Failed to Load Request' : 'Emergency Request Not Found'}
+          description={error || 'The requested emergency record does not exist or has been removed.'}
+          actionLabel="Try Again"
+          onAction={() => fetchData(false)}
+        />
+      </div>
     );
   }
 
@@ -292,7 +291,7 @@ export const RequestDetailsPage: React.FC = () => {
           <Button
             variant="outline"
             size="sm"
-            onClick={fetchData}
+            onClick={() => fetchData(false)}
             leftIcon={<RefreshCw className="h-3.5 w-3.5" />}
           >
             Refresh Feed
@@ -466,9 +465,33 @@ export const RequestDetailsPage: React.FC = () => {
 
                       <div className="flex items-center gap-2">
                         <ShieldCheck className="h-3.5 w-3.5 text-vitality-600 shrink-0" />
-                        <span className="text-slate-400 font-medium">Status:</span>
-                        <span className="font-semibold text-vitality-700">Accepted & Ready</span>
+                        <span className="text-slate-400 font-medium">Coordination:</span>
+                        {donor.coordinationStatus === 'CONTACTED' ? (
+                          <span className="font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded text-[11px] border border-blue-200">
+                            Hospital Contacted (En Route)
+                          </span>
+                        ) : donor.coordinationStatus === 'HOSPITAL_REVIEWED' ? (
+                          <span className="font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded text-[11px] border border-emerald-200">
+                            Profile Reviewed
+                          </span>
+                        ) : (
+                          <span className="font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded text-[11px] border border-amber-200">
+                            Awaiting Review
+                          </span>
+                        )}
                       </div>
+
+                      {donor.selfReportedScreening && (
+                        <div className="p-2 bg-slate-50 rounded-lg border border-slate-100 text-[11px] space-y-1">
+                          <div className="flex items-center gap-1 font-semibold text-slate-700">
+                            <ShieldCheck className="h-3 w-3 text-vitality-600 shrink-0" />
+                            <span>Screening Checklist: Completed</span>
+                          </div>
+                          <p className="text-[10px] text-slate-500 italic">
+                            Informational only. Final eligibility verified at facility.
+                          </p>
+                        </div>
+                      )}
                     </div>
 
                     {/* Contact details / Privacy notice */}
@@ -500,16 +523,40 @@ export const RequestDetailsPage: React.FC = () => {
                       )}
                     </div>
 
-                    {/* Contact Donor Action Button */}
-                    <Button
-                      variant="vitality"
-                      size="sm"
-                      className="w-full mt-3 font-semibold shadow-soft-xs"
-                      onClick={() => handleOpenContact(donor)}
-                      leftIcon={<Phone className="h-3.5 w-3.5" />}
-                    >
-                      Contact Donor
-                    </Button>
+                    {/* Action Buttons: Review Profile & Contact Donor */}
+                    {donor.coordinationStatus !== 'HOSPITAL_REVIEWED' && donor.coordinationStatus !== 'CONTACTED' ? (
+                      <div className="grid grid-cols-2 gap-2 mt-3">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="font-semibold text-xs"
+                          onClick={() => handleReviewDonor(donor.donorId)}
+                          isLoading={reviewingDonorId === donor.donorId}
+                          leftIcon={<ShieldCheck className="h-3.5 w-3.5 text-clinical-600" />}
+                        >
+                          Review Profile
+                        </Button>
+                        <Button
+                          variant="vitality"
+                          size="sm"
+                          className="font-semibold shadow-soft-xs text-xs"
+                          onClick={() => handleOpenContact(donor)}
+                          leftIcon={<Phone className="h-3.5 w-3.5" />}
+                        >
+                          Contact Donor
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button
+                        variant="vitality"
+                        size="sm"
+                        className="w-full mt-3 font-semibold shadow-soft-xs"
+                        onClick={() => handleOpenContact(donor)}
+                        leftIcon={<Phone className="h-3.5 w-3.5" />}
+                      >
+                        {donor.coordinationStatus === 'CONTACTED' ? 'Re-contact Donor' : 'Contact Donor'}
+                      </Button>
+                    )}
                   </CardContent>
                 </Card>
               );

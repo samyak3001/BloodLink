@@ -40,6 +40,36 @@ const selfReportedScreeningSchema = new Schema(
   { _id: false }
 );
 
+const pointSchema = new Schema(
+  {
+    type: {
+      type: String,
+      enum: ['Point'],
+      default: 'Point',
+      required: true,
+    },
+    coordinates: {
+      type: [Number], // [longitude, latitude]
+      required: true,
+      validate: {
+        validator: (val: number[]) =>
+          Array.isArray(val) &&
+          val.length === 2 &&
+          typeof val[0] === 'number' &&
+          typeof val[1] === 'number' &&
+          !isNaN(val[0]) &&
+          !isNaN(val[1]) &&
+          val[0] >= -180 &&
+          val[0] <= 180 &&
+          val[1] >= -90 &&
+          val[1] <= 90,
+        message: 'Coordinates must be valid [longitude (-180 to 180), latitude (-90 to 90)]',
+      },
+    },
+  },
+  { _id: false }
+);
+
 const donorProfileSchema = new Schema<IDonorProfileDocument>(
   {
     userId: {
@@ -80,30 +110,15 @@ const donorProfileSchema = new Schema<IDonorProfileDocument>(
       type: Date,
     },
     location: {
-      type: {
-        type: String,
-        enum: ['Point'],
-        default: 'Point',
-        required: true,
-      },
-      coordinates: {
-        type: [Number], // [longitude, latitude]
-        required: true,
-        validate: {
-          validator: (val: number[]) =>
-            Array.isArray(val) &&
-            val.length === 2 &&
-            val[0] >= -180 &&
-            val[0] <= 180 &&
-            val[1] >= -90 &&
-            val[1] <= 90,
-          message: 'Coordinates must be valid [longitude (-180 to 180), latitude (-90 to 90)]',
-        },
-      },
+      type: pointSchema,
+      required: false,
+      default: undefined,
     },
     address: {
+      street: { type: String, trim: true, default: '' },
       city: { type: String, required: [true, 'City is required'], trim: true },
       district: { type: String, required: [true, 'District is required'], trim: true },
+      state: { type: String, trim: true, default: '' },
       postalCode: { type: String, required: [true, 'Postal code is required'], trim: true },
     },
     privacySettings: {
@@ -134,8 +149,8 @@ const donorProfileSchema = new Schema<IDonorProfileDocument>(
   }
 );
 
-// Geospatial 2dsphere index for proximity matching
-donorProfileSchema.index({ location: '2dsphere' });
+// Geospatial 2dsphere index for proximity matching (sparse to support donors without coordinates)
+donorProfileSchema.index({ location: '2dsphere' }, { sparse: true });
 
 // Compound index for matching queries (available donors by blood group)
 donorProfileSchema.index({ isAvailable: 1, bloodGroup: 1 });

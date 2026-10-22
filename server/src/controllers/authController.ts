@@ -59,51 +59,86 @@ export async function register(
       status: 'ACTIVE',
     });
 
-    // 5. Create Role Profile
-    let createdProfile = null;
+    // Resolve coordinates safely: only persist Point when coordinates are valid numbers in range
+    let resolvedCoordinates: [number, number] | undefined;
+    if (
+      Array.isArray(data.coordinates) &&
+      data.coordinates.length === 2 &&
+      typeof data.coordinates[0] === 'number' &&
+      typeof data.coordinates[1] === 'number' &&
+      !isNaN(data.coordinates[0]) &&
+      !isNaN(data.coordinates[1]) &&
+      data.coordinates[0] >= -180 &&
+      data.coordinates[0] <= 180 &&
+      data.coordinates[1] >= -90 &&
+      data.coordinates[1] <= 90
+    ) {
+      resolvedCoordinates = [data.coordinates[0], data.coordinates[1]];
+    } else if (
+      data.latitude !== undefined &&
+      data.longitude !== undefined &&
+      !isNaN(data.latitude) &&
+      !isNaN(data.longitude) &&
+      data.longitude >= -180 &&
+      data.longitude <= 180 &&
+      data.latitude >= -90 &&
+      data.latitude <= 90
+    ) {
+      resolvedCoordinates = [data.longitude, data.latitude];
+    }
 
-    if (data.role === 'DONOR') {
-      createdProfile = await DonorProfile.create({
-        userId: user._id,
-        bloodGroup: data.bloodGroup!,
-        supportedComponents: data.supportedComponents || ['WHOLE_BLOOD'],
-        selfReportedScreening: {
-          isAgeEligible: data.selfReportedScreening?.isAgeEligible ?? false,
-          isWeightEligible: data.selfReportedScreening?.isWeightEligible ?? false,
-          hasNoRecentIllness: data.selfReportedScreening?.hasNoRecentIllness ?? true,
-          hasValidInterval: data.selfReportedScreening?.hasValidInterval ?? true,
-          screeningDisclaimerAcknowledged:
-            data.selfReportedScreening?.screeningDisclaimerAcknowledged ?? false,
-          lastScreeningDate: new Date(),
-        },
-        location: {
-          type: 'Point',
-          coordinates: data.coordinates || [77.5946, 12.9716], // Default coordinates if not provided
-        },
-        address: {
-          city: data.city!,
-          district: data.district!,
-          postalCode: data.postalCode!,
-        },
-      });
-    } else if (data.role === 'HOSPITAL') {
-      createdProfile = await HospitalProfile.create({
-        userId: user._id,
-        hospitalName: data.hospitalName!,
-        licenseNumber: data.licenseNumber!,
-        emergencyHelpline: data.emergencyHelpline!,
-        isVerifiedByAdmin: false,
-        location: {
-          type: 'Point',
-          coordinates: data.coordinates || [77.5946, 12.9716],
-        },
-        address: {
-          street: data.street || 'Hospital Road',
-          city: data.city!,
-          state: data.state!,
-          postalCode: data.postalCode!,
-        },
-      });
+    const locationField = resolvedCoordinates
+      ? {
+          type: 'Point' as const,
+          coordinates: resolvedCoordinates,
+        }
+      : undefined;
+
+    // 5. Create Role Profile with atomic rollback to prevent orphaned User records
+    let createdProfile = null;
+    try {
+      if (data.role === 'DONOR') {
+        createdProfile = await DonorProfile.create({
+          userId: user._id,
+          bloodGroup: data.bloodGroup!,
+          supportedComponents: data.supportedComponents || ['WHOLE_BLOOD'],
+          selfReportedScreening: {
+            isAgeEligible: data.selfReportedScreening?.isAgeEligible ?? false,
+            isWeightEligible: data.selfReportedScreening?.isWeightEligible ?? false,
+            hasNoRecentIllness: data.selfReportedScreening?.hasNoRecentIllness ?? true,
+            hasValidInterval: data.selfReportedScreening?.hasValidInterval ?? true,
+            screeningDisclaimerAcknowledged:
+              data.selfReportedScreening?.screeningDisclaimerAcknowledged ?? false,
+            lastScreeningDate: new Date(),
+          },
+          location: locationField,
+          address: {
+            city: data.city!,
+            district: data.district!,
+            postalCode: data.postalCode!,
+          },
+        });
+      } else if (data.role === 'HOSPITAL') {
+        createdProfile = await HospitalProfile.create({
+          userId: user._id,
+          hospitalName: data.hospitalName!,
+          licenseNumber: data.licenseNumber!,
+          emergencyHelpline: data.emergencyHelpline!,
+          isVerifiedByAdmin: false,
+          location: locationField,
+          address: {
+            street: data.street || 'Hospital Road',
+            city: data.city!,
+            district: data.district || data.city!,
+            state: data.state!,
+            postalCode: data.postalCode!,
+          },
+        });
+      }
+    } catch (profileError) {
+      // Safe cleanup: delete orphaned user record if profile creation fails
+      await User.findByIdAndDelete(user._id);
+      throw profileError;
     }
 
     // 6. Security Audit Log (non-fatal — a logging failure must not block the user)
@@ -193,7 +228,15 @@ export async function login(
       console.error('[AuditLog] Failed to write USER_LOGIN_SUCCESS audit entry:', auditErr);
     }
 
-    // 5. Generate token
+    // 5. Retrieve associated role profile
+    let profile = null;
+    if (user.role === 'DONOR') {
+      profile = await DonorProfile.findOne({ userId: user._id });
+    } else if (user.role === 'HOSPITAL') {
+      profile = await HospitalProfile.findOne({ userId: user._id });
+    }
+
+    // 6. Generate token
     const token = generateToken({
       userId: user._id.toString(),
       role: user.role,
@@ -205,6 +248,7 @@ export async function login(
       message: 'Login successful',
       token,
       user: user.toSafeObject(),
+      profile: profile ? profile.toJSON() : null,
     });
   } catch (error) {
     next(error);

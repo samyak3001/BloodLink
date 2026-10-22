@@ -90,8 +90,10 @@ export interface IDonorProfile {
   lastDonationDate?: Date;
   location: GeoJSONPoint;
   address: {
+    street?: string;
     city: string;
     district: string;
+    state?: string;
     postalCode: string;
   };
   privacySettings: {
@@ -137,14 +139,20 @@ export interface IHospitalProfile {
   updatedAt: Date;
 }
 
+// Coordination Statuses between hospital and donor
+export type CoordinationStatus = 'PENDING' | 'HOSPITAL_REVIEWED' | 'CONTACTED';
+
 // Potential Match Entry inside Emergency Request
 export interface IPotentialMatchEntry {
   donorId: Types.ObjectId | IDonorProfile;
   status: PotentialMatchStatus;
+  coordinationStatus?: CoordinationStatus;
   matchScore: number;
   distanceKm: number;
   notifiedAt: Date;
   respondedAt?: Date;
+  reviewedAt?: Date;
+  contactedAt?: Date;
 }
 
 // Emergency Request Document Interface

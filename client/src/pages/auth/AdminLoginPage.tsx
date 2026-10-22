@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Mail, Lock, ShieldCheck, LogIn } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
@@ -13,7 +13,7 @@ export const AdminLoginPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const { login, logout } = useAuth();
+  const { user, login, logout } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -74,6 +74,21 @@ export const AdminLoginPage: React.FC = () => {
 
         <CardContent className="pt-6">
           <form onSubmit={handleSubmit} className="space-y-4">
+            {user && user.role !== 'ADMIN' && (
+              <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 flex items-center justify-between gap-2">
+                <span>
+                  Currently logged in as <strong>{user.name}</strong> ({user.role.toLowerCase()}). Sign in below to switch to an administrator account.
+                </span>
+                <button
+                  type="button"
+                  onClick={logout}
+                  className="font-bold underline hover:text-amber-700 whitespace-nowrap"
+                >
+                  Log out
+                </button>
+              </div>
+            )}
+
             {error && (
               <div className="p-3.5 rounded-xl bg-emergency-50 border border-emergency-200 text-xs text-emergency-700 font-medium leading-relaxed">
                 {error}

@@ -30,9 +30,29 @@ export const registerSchema = z.object({
   city: z.string().trim().min(2, 'City is required').optional(),
   district: z.string().trim().min(2, 'District is required').optional(),
   postalCode: z.string().trim().min(3, 'Postal code is required').optional(),
+  latitude: z
+    .union([z.number(), z.string()])
+    .optional()
+    .transform((val) => (val === undefined || val === '' ? undefined : Number(val)))
+    .refine(
+      (val) => val === undefined || (!isNaN(val) && val >= -90 && val <= 90),
+      'Latitude must be a valid number between -90 and 90'
+    ),
+  longitude: z
+    .union([z.number(), z.string()])
+    .optional()
+    .transform((val) => (val === undefined || val === '' ? undefined : Number(val)))
+    .refine(
+      (val) => val === undefined || (!isNaN(val) && val >= -180 && val <= 180),
+      'Longitude must be a valid number between -180 and 180'
+    ),
   coordinates: z
     .array(z.number())
     .length(2, 'Coordinates must be [longitude, latitude]')
+    .refine(
+      (val) => val[0] >= -180 && val[0] <= 180 && val[1] >= -90 && val[1] <= 90,
+      'Coordinates must be valid [longitude (-180 to 180), latitude (-90 to 90)]'
+    )
     .optional(),
   selfReportedScreening: z
     .object({
@@ -51,6 +71,15 @@ export const registerSchema = z.object({
   street: z.string().trim().min(2).optional(),
   state: z.string().trim().min(2).optional(),
 }).superRefine((data, ctx) => {
+  const hasLat = data.latitude !== undefined;
+  const hasLng = data.longitude !== undefined;
+  if ((hasLat && !hasLng) || (!hasLat && hasLng)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: [hasLat ? 'longitude' : 'latitude'],
+      message: 'Both latitude and longitude must be provided together',
+    });
+  }
   if (data.role === 'DONOR') {
     if (!data.bloodGroup) {
       ctx.addIssue({
@@ -143,7 +172,56 @@ export const resetPasswordSchema = z.object({
     .regex(passwordRegex, 'Password must contain at least one uppercase letter, one lowercase letter, and one number'),
 });
 
+export const updateHospitalProfileSchema = z.object({
+  hospitalName: z.string().trim().min(2, 'Hospital name must be at least 2 characters').max(150, 'Hospital name cannot exceed 150 characters').optional(),
+  name: z.string().trim().min(2, 'Hospital name must be at least 2 characters').max(150, 'Hospital name cannot exceed 150 characters').optional(),
+  email: z.string().trim().email('Please enter a valid official email address').toLowerCase().optional(),
+  phone: z.string().trim().min(5, 'Emergency hotline must be at least 5 characters').max(30, 'Emergency hotline cannot exceed 30 characters').optional(),
+  emergencyHelpline: z.string().trim().min(5, 'Emergency hotline must be at least 5 characters').max(30, 'Emergency hotline cannot exceed 30 characters').optional(),
+  licenseNumber: z.string().trim().min(3, 'License number must be at least 3 characters').max(50, 'License number cannot exceed 50 characters').optional(),
+  street: z.string().trim().min(2, 'Street address must be at least 2 characters').optional(),
+  city: z.string().trim().min(2, 'City is required and must be at least 2 characters').optional(),
+  district: z.string().trim().min(2, 'District must be at least 2 characters').optional(),
+  state: z.string().trim().min(2, 'State must be at least 2 characters').optional(),
+  postalCode: z.string().trim().min(3, 'Postal code must be at least 3 characters').optional(),
+  latitude: z
+    .union([z.number(), z.string()])
+    .optional()
+    .transform((val) => (val === undefined || val === '' ? undefined : Number(val)))
+    .refine(
+      (val) => val === undefined || (!isNaN(val) && val >= -90 && val <= 90),
+      'Latitude must be a valid number between -90 and 90'
+    ),
+  longitude: z
+    .union([z.number(), z.string()])
+    .optional()
+    .transform((val) => (val === undefined || val === '' ? undefined : Number(val)))
+    .refine(
+      (val) => val === undefined || (!isNaN(val) && val >= -180 && val <= 180),
+      'Longitude must be a valid number between -180 and 180'
+    ),
+  coordinates: z
+    .array(z.number())
+    .length(2, 'Coordinates must be [longitude, latitude]')
+    .refine(
+      (val) => val[0] >= -180 && val[0] <= 180 && val[1] >= -90 && val[1] <= 90,
+      'Coordinates must be valid [longitude (-180 to 180), latitude (-90 to 90)]'
+    )
+    .optional(),
+}).superRefine((data, ctx) => {
+  const hasLat = data.latitude !== undefined;
+  const hasLng = data.longitude !== undefined;
+  if ((hasLat && !hasLng) || (!hasLat && hasLng)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: [hasLat ? 'longitude' : 'latitude'],
+      message: 'Both latitude and longitude must be provided together',
+    });
+  }
+});
+
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
+export type UpdateHospitalProfileInput = z.infer<typeof updateHospitalProfileSchema>;
